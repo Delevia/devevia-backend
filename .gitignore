@@ -1,0 +1,28 @@
+# Ignore virtual environment folders
+venv/
+env/
+
+# Ignore Python cache files
+__pycache__/
+*.py[cod]
+
+# Ignore environment and IDE configuration files
+*.env
+*.log
+*.sqlite3
+*.db
+*.DS_Store
+
+# Ignore requirements and logs
+pip-log.txt
+*.log
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# Ignore OS-specific files
+.DS_Store
+Thumbs.db
+
+# Ignore other dependency folders
+node_modules/
