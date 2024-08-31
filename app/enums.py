@@ -8,3 +8,7 @@ class UserType(Enum):
 class UserStatusEnum(str, Enum):
     ACTIVE = "ACTIVE"
     SUSPENDED = "SUSPENDED"
+
+
+# PENDING
+# DISABLED

@@ -1,6 +1,9 @@
 # utils/otp.py
 from twilio.rest import Client
 import random
+from datetime import datetime, timedelta
+from sqlalchemy.orm import Session
+from ..models import OTPVerification
 from dotenv import load_dotenv
 import os
 
@@ -14,9 +17,11 @@ def initialize_twilio():
     return Client(account_sid, auth_token)
 
 def generate_otp():
+    """Generate a 6-digit OTP."""
     return random.randint(100000, 999999)
 
 def send_otp(phone_number, otp):
+    """Send the OTP to the user's phone number using Twilio."""
     client = initialize_twilio()
     message = client.messages.create(
         body=f"Your OTP code is {otp}",
@@ -25,15 +30,18 @@ def send_otp(phone_number, otp):
     )
     return message.sid
 
-# In-memory storage for OTPs (replace with a database in production)
-otp_storage = {}
+def store_otp(db: Session, phone_number: str, otp: str):
+    """Store OTP in the database."""
+    expires_at = datetime.utcnow() + timedelta(minutes=5)  # OTP expires in 5 minutes
+    otp_entry = OTPVerification(phone_number=phone_number, otp_code=otp, expires_at=expires_at)
+    db.add(otp_entry)
+    db.commit()
 
-def store_otp(phone_number, otp):
-    otp_storage[phone_number] = otp
-
-def verify_otp(phone_number, otp):
-    stored_otp = otp_storage.get(phone_number)
-    if stored_otp == otp:
-        del otp_storage[phone_number]  # OTP should be used only once
+def verify_otp(db: Session, phone_number: str, otp: str):
+    """Verify the OTP against the database."""
+    otp_entry = db.query(OTPVerification).filter_by(phone_number=phone_number, otp_code=otp).first()
+    if otp_entry and not otp_entry.is_verified and otp_entry.expires_at > datetime.utcnow():
+        otp_entry.is_verified = True
+        db.commit()
         return True
     return False
