@@ -1,8 +1,8 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, Enum as SQLAEnum, TIMESTAMP, Date, Integer
+from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, Enum as SQLAEnum, TIMESTAMP, Date, Integer, LargeBinary
 from sqlalchemy.orm import relationship
 from .database import Base
 from sqlalchemy.sql.expression import text
-from .enums import UserType, UserStatusEnum
+from .enums import UserType, UserStatusEnum, PaymentMethodEnum
 
 # Base User Model
 class User(Base):
@@ -17,12 +17,13 @@ class User(Base):
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text('now()'))
     address = Column(String(100), nullable=False)
     user_type = Column(SQLAEnum(UserType), nullable=False)  # Adding the Enum column
-    user_status = Column(SQLAEnum(UserStatusEnum), default=UserStatusEnum.ACTIVE, nullable=False)  
+    user_status = Column(SQLAEnum(UserStatusEnum), default=UserStatusEnum.AWAITING, nullable=False)  
    
 
 
 
     # Relationships
+    kyc = relationship("KYC", uselist=False, back_populates="user")
     otp_verification = relationship("OTPVerification", back_populates="user", uselist=False, cascade="all, delete-orphan")
     rider = relationship("Rider", back_populates="user", uselist=False, cascade="all, delete-orphan")
     driver = relationship("Driver", back_populates="user", uselist=False, cascade="all, delete-orphan")
@@ -33,6 +34,8 @@ class Rider(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
+    rider_photo = Column(LargeBinary, nullable=True)  # Store image as binary data (BLOB)
+    prefered_payment_method = Column(SQLAEnum(PaymentMethodEnum), nullable=False)  # Correctly define the Enum type here
     # Add any rider-specific fields here
 
     user = relationship("User", back_populates="rider")
@@ -44,11 +47,12 @@ class Driver(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
+    driver_photo = Column(LargeBinary, nullable=True)  # Store image as binary data (BLOB)
     license_number = Column(String, unique=True, index=True)
-    vehicle = relationship("Vehicle", back_populates="driver", uselist=False)
     license_expiry = Column(Date, nullable=False)  # Optional field for license expiry date
     years_of_experience = Column(Integer, nullable=False)  # Optional field for years of experience
 
+    vehicle = relationship("Vehicle", back_populates="driver", uselist=False)
     user = relationship("User", back_populates="driver")
     rides = relationship("Ride", back_populates="driver")
 
@@ -62,6 +66,10 @@ class Vehicle(Base):
     model = Column(String, index=True)
     year = Column(Integer)
     license_plate = Column(String, unique=True, index=True)
+    color = Column(String, index=True)
+    vehicle_number = Column(String, index=True)
+    last_service_date = Column(String, index=True)
+    vehicle_status = Column(String, index=True)
 
     driver = relationship("Driver", back_populates="vehicle", uselist=False)
 
@@ -95,4 +103,29 @@ class OTPVerification(Base):
 
      # Relationship
     user = relationship("User", back_populates="otp_verification")
+
+
+
+# OTP Admin Model
+class Admin(Base):
+    __tablename__ = "admin"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    department = Column(String, nullable=False)  
+    access_level = Column(String, nullable=False)
+
+
+class KYC(Base):
+    __tablename__ = "kyc"
+
+    kyc_id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
+    identity_number = Column(String, unique=True, nullable=False)
+
+    # Establish a relationship with the User model
+    user = relationship("User", back_populates="kyc")
+
+
+
+
 

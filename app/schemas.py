@@ -1,16 +1,15 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from passlib.context import CryptContext
+from fastapi import UploadFile
 from sqlalchemy.orm import Session
 from .models import User
-from .enums import UserType as UserTypeEnum, UserStatusEnum
+from .enums import UserType as UserTypeEnum, UserStatusEnum, PaymentMethodEnum
 from typing import Optional
 import re
 
 
 # Initialize the CryptContext
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-
 
 # Pydantic models for request bodies
 class UserBase(BaseModel):
@@ -21,19 +20,25 @@ class UserBase(BaseModel):
     password: str
     address: str
     user_type: UserTypeEnum  # Enum field for user type
-    user_status: Optional[UserStatusEnum] = UserStatusEnum.ACTIVE  # Default to ACTIVE
-
-
+    user_status: Optional[UserStatusEnum] = UserStatusEnum.AWAITING  # Default to ACTIVE
 
     class Config:
         orm_mode = True
 
-# Rider creation schema
-class RiderCreate(UserBase):
-    pass  # Inherits all fields from UserBase
+# Create a Pydantic model for the Rider form data
+class RiderCreate(BaseModel):
+    full_name: str
+    user_name: str
+    phone_number: str
+    email: str
+    password: str
+    address: Optional[str] = None
+    prefered_payment_method: PaymentMethodEnum
+    rider_photo: UploadFile
 
 # Driver creation schema with license number
 class DriverCreate(UserBase):
+    driver_photo: Optional[bytes] = None  # Field to accept the photo as binary data (base64 encoded)
     license_number: str
     license_expiry: str
     years_of_experience: str  
@@ -51,8 +56,7 @@ class PhoneNumberRequest(BaseModel):
             raise ValueError("Phone number must be between 10 and 15 digits.")
         return value
 
-
-# Schema for Verifying O T P
+# Schema for Verifying OTP
 class OTPVerificationRequest(BaseModel):
     # Validates E.164 format for the phone number
     phone_number: str = Field(..., pattern=r'^\+?[1-9]\d{1,14}$')
@@ -73,8 +77,20 @@ class OTPVerificationRequest(BaseModel):
             raise ValueError("Invalid phone number format.")
         return value
 
-   
+# KYC Schema
+class KycCreate(BaseModel):
+    user_id: int = Field(..., description="ID of the user submitting the KYC")
+    identity_number: str = Field(..., description="Identity number provided by the user")
 
+    class Config:
+        orm_mode = True
+
+
+
+class AdminCreate(BaseModel):
+    user_id: int
+    department: str
+    access_level: str
 
 # Utility function to hash passwords
 def get_password_hash(password: str) -> str:
@@ -91,7 +107,6 @@ def create_user(db: Session, user: UserBase):
         address=user.address,
         user_type=user.user_type, 
         user_status=user.user_status
-
     )
     db.add(db_user)
     db.commit()
