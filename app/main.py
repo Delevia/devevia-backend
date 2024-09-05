@@ -37,6 +37,14 @@ async def signup_rider(
     existing_user = db.query(User).filter(User.phone_number == phone_number).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Phone Number already exists")
+    existing_user = db.query(User).filter(User.email == email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="email already exists")
+    existing_user = db.query(User).filter(User.user_name == user_name).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="user name already exists")
+        
+    
 
     # Hash the password
     hashed_password = get_password_hash(password)
@@ -79,8 +87,7 @@ async def signup_driver(
     phone_number: str = Form(...),
     email: str = Form(...),
     password: str = Form(...),
-    address: Optional[str] = Form(None),  # Use Optional for fields that might be missing
-    user_type: str = Form(...),
+    address: Optional[str] = Form(None),
     license_number: str = Form(...),
     license_expiry: date = Form(...),
     years_of_experience: int = Form(...),
@@ -88,12 +95,21 @@ async def signup_driver(
     db: Session = Depends(get_db)
 ):
     # Check if user already exists
+    existing_license = db.query(Driver).filter(Driver.license_number == license_number).first()
+    if existing_license:
+        raise HTTPException(status_code=400, detail="License number already exists")
     existing_user = db.query(User).filter(User.phone_number == phone_number).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Phone number already exists")
-
-    # Hash the password here (ensure you have a password hashing function)
-    hashed_password=get_password_hash(password),
+    existing_user = db.query(User).filter(User.email == email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already exists")
+    existing_user = db.query(User).filter(User.user_name == user_name).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username already exists")
+    
+    # Hash the password
+    hashed_password = get_password_hash(password)
 
     # Create new user
     db_user = User(
@@ -103,19 +119,22 @@ async def signup_driver(
         email=email,
         hashed_password=hashed_password,
         address=address,
-        user_type=user_type
+        user_type="DRIVER"
     )
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
 
-    # Save the uploaded file
-    file_location = f"files/{driver_photo.filename}"
-    try:
-        with open(file_location, "wb") as file_object:
-            file_object.write(driver_photo.file.read())
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error saving file: {str(e)}")
+    # Save the uploaded file to a specific directory
+    file_content = await driver_photo.read()
+
+    # Save the uploaded file to a specific directory
+    # file_location = f"files/{driver_photo.filename}"
+    # try:
+    #     with open(file_location, "wb") as file_object:
+    #         file_object.write(await driver_photo.read())
+    # except Exception as e:
+    #     raise HTTPException(status_code=500, detail=f"Error saving file: {str(e)}")
 
     # Create driver profile
     db_driver = Driver(
@@ -123,7 +142,7 @@ async def signup_driver(
         license_number=license_number,
         license_expiry=license_expiry,
         years_of_experience=years_of_experience,
-        # Consider saving file path to the database if needed
+        driver_photo=file_content  # Store the file path in the database
     )
     db.add(db_driver)
     db.commit()
@@ -220,3 +239,5 @@ def create_admin(admin: AdminCreate, db: Session = Depends(get_db)) -> Any:
     db.refresh(new_admin)
 
     return {"message": "Admin record created successfully", "admin_id": new_admin.id}
+
+
