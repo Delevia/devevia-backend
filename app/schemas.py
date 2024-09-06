@@ -86,7 +86,13 @@ class KycCreate(BaseModel):
         orm_mode = True
 
 
+# Define a Pydantic model for login input data
+class LoginSchema(BaseModel):
+    username: str
+    password: str
 
+
+# Define a Pydantic model for Admin
 class AdminCreate(BaseModel):
     user_id: int
     department: str

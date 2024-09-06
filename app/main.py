@@ -6,12 +6,16 @@ from datetime import date
 from .database import engine, get_db
 from sqlalchemy.orm import Session
 from .models import User, Rider, Driver, KYC, Admin
-from .schemas import RiderCreate, DriverCreate, create_user, PhoneNumberRequest, OTPVerificationRequest, KycCreate, AdminCreate, get_password_hash 
+from .schemas import LoginSchema, create_user, PhoneNumberRequest, OTPVerificationRequest, KycCreate, AdminCreate, get_password_hash, pwd_context 
 from .utils.otp import generate_otp, send_otp, store_otp, verify_otp
 from .twilio_client import client, twilio_phone_number, verify_service_sid  # Import the client and phone number
 
 
 models.Base.metadata.create_all(bind=engine)
+
+# Reusable function to verify password
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
 
 app = FastAPI()
 
@@ -128,14 +132,6 @@ async def signup_driver(
     # Save the uploaded file to a specific directory
     file_content = await driver_photo.read()
 
-    # Save the uploaded file to a specific directory
-    # file_location = f"files/{driver_photo.filename}"
-    # try:
-    #     with open(file_location, "wb") as file_object:
-    #         file_object.write(await driver_photo.read())
-    # except Exception as e:
-    #     raise HTTPException(status_code=500, detail=f"Error saving file: {str(e)}")
-
     # Create driver profile
     db_driver = Driver(
         user_id=db_user.id,
@@ -149,6 +145,43 @@ async def signup_driver(
     db.refresh(db_driver)
 
     return {"message": "Registration Successful"}
+
+
+
+# Login endpoint for Rider
+@app.post("/login/rider/", status_code=status.HTTP_200_OK)
+async def login_rider(
+    login_data: LoginSchema,  # Use the custom schema
+    db: Session = Depends(get_db)
+):
+    # Query the database for the rider
+    rider = db.query(User).filter(User.user_name == login_data.username, User.user_type == "RIDER").first()
+    if not rider:
+        raise HTTPException(status_code=400, detail="Invalid username or password")
+
+    # Verify the password
+    if not verify_password(login_data.password, rider.hashed_password):
+        raise HTTPException(status_code=400, detail="Invalid username or password")
+
+    return {"message": "Login Successful", "user_id": rider.id, "user_type": rider.user_type}
+
+
+# Login endpoint for Driver
+@app.post("/login/driver/", status_code=status.HTTP_200_OK)
+async def login_driver(
+    login_data: LoginSchema,  # Use the custom schema
+    db: Session = Depends(get_db)
+):
+    # Query the database for the driver
+    driver = db.query(User).filter(User.user_name == login_data.username, User.user_type == "DRIVER").first()
+    if not driver:
+        raise HTTPException(status_code=400, detail="Invalid username or password")
+
+    # Verify the password
+    if not verify_password(login_data.password, driver.hashed_password):
+        raise HTTPException(status_code=400, detail="Invalid username or password")
+
+    return {"message": "Login Successful", "user_id": driver.id, "user_type": driver.user_type}
 
 
 # @app.put("/users/{user_id}/status/", response_model=UserBase)
