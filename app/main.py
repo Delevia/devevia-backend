@@ -155,13 +155,13 @@ async def login_rider(
     db: Session = Depends(get_db)
 ):
     # Query the database for the rider
-    rider = db.query(User).filter(User.user_name == login_data.username, User.user_type == "RIDER").first()
+    rider = db.query(User).filter(User.phone_number == login_data.phone_number, User.user_type == "RIDER").first()
     if not rider:
-        raise HTTPException(status_code=400, detail="Invalid username or password")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid phone number or password")
 
     # Verify the password
     if not verify_password(login_data.password, rider.hashed_password):
-        raise HTTPException(status_code=400, detail="Invalid username or password")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid phone number or password")
 
     return {"message": "Login Successful", "user_id": rider.id, "user_type": rider.user_type}
 
@@ -173,13 +173,13 @@ async def login_driver(
     db: Session = Depends(get_db)
 ):
     # Query the database for the driver
-    driver = db.query(User).filter(User.user_name == login_data.username, User.user_type == "DRIVER").first()
+    driver = db.query(User).filter(User.phone_number == login_data.phone_number, User.user_type == "DRIVER").first()
     if not driver:
-        raise HTTPException(status_code=400, detail="Invalid username or password")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid phone number or password")
 
     # Verify the password
     if not verify_password(login_data.password, driver.hashed_password):
-        raise HTTPException(status_code=400, detail="Invalid username or password")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid phone number or password")
 
     return {"message": "Login Successful", "user_id": driver.id, "user_type": driver.user_type}
 

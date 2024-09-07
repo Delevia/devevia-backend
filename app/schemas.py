@@ -88,7 +88,7 @@ class KycCreate(BaseModel):
 
 # Define a Pydantic model for login input data
 class LoginSchema(BaseModel):
-    username: str
+    phone_number: str
     password: str
 
 
