@@ -1,8 +1,12 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, Enum as SQLAEnum, TIMESTAMP, Date, Integer, LargeBinary
+
+
+
+from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, Enum as SQLAEnum, TIMESTAMP, Date, Integer, LargeBinary, DateTime
 from sqlalchemy.orm import relationship
 from .database import Base
 from sqlalchemy.sql.expression import text
 from .enums import UserType, UserStatusEnum, PaymentMethodEnum
+from datetime import datetime
 
 # Base User Model
 class User(Base):
@@ -23,6 +27,7 @@ class User(Base):
 
 
     # Relationships
+    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     kyc = relationship("KYC", uselist=False, back_populates="user")
     otp_verification = relationship("OTPVerification", back_populates="user", uselist=False, cascade="all, delete-orphan")
     rider = relationship("Rider", back_populates="user", uselist=False, cascade="all, delete-orphan")
@@ -127,5 +132,14 @@ class KYC(Base):
 
 
 
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
 
+    id = Column(Integer, primary_key=True, index=True)
+    token = Column(String, unique=True, nullable=False)  # Store the actual token string
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # Assume the user table is 'users'
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    is_revoked = Column(Boolean, default=False)  # Flag to indicate if the token is revoked
 
+    user = relationship("User", back_populates="refresh_tokens")  # Relationship with the User model

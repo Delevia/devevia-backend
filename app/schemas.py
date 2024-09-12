@@ -1,3 +1,4 @@
+
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from passlib.context import CryptContext
 from fastapi import UploadFile
@@ -84,6 +85,14 @@ class KycCreate(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+# Schema For Refresh Token
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+class RequestTokenResponse(BaseModel):
+    access_token: str
 
 
 # Define a Pydantic model for login input data
