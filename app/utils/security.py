@@ -4,9 +4,10 @@ from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import HTTPException, status
-from ..models import RefreshToken
+from ..models import RefreshToken, BlacklistedToken
 from ..database import get_db
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 # Configuration variables
 SECRET_KEY = "edaac9e321d9f0aa975f0929beb0fbed4c0f8e63"  # Replace with a secure key
@@ -106,3 +107,33 @@ def decode_refresh_token(token: str, db: Session) -> dict:
 def hash_password(password: str) -> str:
     """Hash a plaintext password."""
     return pwd_context.hash(password)
+
+
+# Check if the given access token is in the blacklist
+def is_token_blacklisted(token: str, db: Session) -> bool:
+    """Check if the given access token is in the blacklist."""
+    return db.query(BlacklistedToken).filter(BlacklistedToken.token == token).first() is not None
+
+
+# Decode an access token
+def decode_access_token(token: str, db: Session) -> dict:
+    """Decode an access token and validate it."""
+    if is_token_blacklisted(token, db):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired access token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+

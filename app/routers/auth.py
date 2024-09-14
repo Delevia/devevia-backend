@@ -4,9 +4,9 @@ from ..database import get_db
 from datetime import datetime
 from ..schemas import LoginSchema, PhoneNumberRequest, OTPVerificationRequest
 from ..utils.otp import verify_otp
-from ..models import User, RefreshToken
+from ..models import User, RefreshToken, BlacklistedToken
 from ..twilio_client import client, verify_service_sid  # Import the client and verify service SID
-from ..schemas import RefreshTokenRequest, RequestTokenResponse
+from ..schemas import RefreshTokenRequest, RequestTokenResponse, LogoutRequest
 from ..schemas import pwd_context
 from ..utils.security import  (
     create_access_token,
@@ -72,12 +72,21 @@ async def login_driver(
 @router.post("/refresh", response_model=RequestTokenResponse)
 async def refresh_token(request: RefreshTokenRequest, db: Session = Depends(get_db)):
     print(f"Received refresh token: {request.refresh_token}")
+
+    # Check if the refresh token is blacklisted
+    blacklisted_token = db.query(BlacklistedToken).filter(BlacklistedToken.token == request.refresh_token).first()
+    if blacklisted_token:
+        print("Refresh token is blacklisted")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+
+    # Decode the refresh token
     user_data = decode_refresh_token(request.refresh_token, db)
 
     if not user_data:
         print("Failed to decode refresh token or token is invalid")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
+    # Generate a new access token
     access_token = create_access_token(data={"sub": str(user_data["sub"])})
 
     print(f"New access token generated: {access_token}")
@@ -106,3 +115,34 @@ async def verify_otp_code(request: OTPVerificationRequest, db: Session = Depends
         return {"message": "OTP verified successfully."}
     else:
         raise HTTPException(status_code=400, detail="Invalid OTP or OTP expired.")
+
+
+#Logout Endpoint
+@router.post("/logout", status_code=status.HTTP_200_OK)
+async def logout(request: LogoutRequest, db: Session = Depends(get_db)):
+    # Retrieve the refresh token from the request body
+    refresh_token = request.refresh_token
+
+    # Find the refresh token in the database
+    token_record = db.query(RefreshToken).filter(RefreshToken.token == refresh_token).first()
+
+    if not token_record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Refresh token not found")
+
+    # Mark the refresh token as revoked
+    token_record.is_revoked = True
+    db.commit()
+
+    # Blacklist the refresh token
+    blacklisted_refresh_token = BlacklistedToken(token=refresh_token)
+    db.add(blacklisted_refresh_token)
+
+    # Optionally, blacklist the access token if provided
+    if request.access_token:
+        blacklisted_access_token = BlacklistedToken(token=request.access_token)
+        db.add(blacklisted_access_token)
+
+    # Commit all changes at once
+    db.commit()
+
+    return {"message": "Logout successful"}

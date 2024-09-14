@@ -143,3 +143,12 @@ class RefreshToken(Base):
     is_revoked = Column(Boolean, default=False)  # Flag to indicate if the token is revoked
 
     user = relationship("User", back_populates="refresh_tokens")  # Relationship with the User model
+
+
+# BlacklistedToken
+class BlacklistedToken(Base):
+    __tablename__ = "blacklisted_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    token = Column(String, unique=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
