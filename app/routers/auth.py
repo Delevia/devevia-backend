@@ -104,25 +104,40 @@ async def refresh_token(request: RefreshTokenRequest, db: Session = Depends(get_
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-
-# SEND OTP
+# Send OTP
 @router.post("/send-otp/")
 async def send_otp(request: OtpPhoneNumberRequest, db: Session = Depends(get_db)):
     phone_number = request.phone_number
+
+    # Check if the phone number already exists in the Users table (meaning the user is registered)
+    existing_user = db.query(User).filter(User.phone_number == phone_number).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Phone Number already exists")
 
     # Generate OTP and expiration time
     otp_code = generate_otp()
     expiration_time = generate_otp_expiration()
 
-    # Create OTP entry in the database
-    otp_entry = OTPVerification(
-        phone_number=phone_number,
-        otp_code=otp_code,
-        expires_at=expiration_time
-    )
-    db.add(otp_entry)   # Add OTP to the database session
-    db.commit()         # Commit the transaction to save OTP
-    db.refresh(otp_entry)  # Refresh the instance to get updated information
+    # Check if an OTP already exists for the phone number
+    existing_otp = db.query(OTPVerification).filter(OTPVerification.phone_number == phone_number).first()
+
+    if existing_otp:
+        # Update the existing OTP record with the new OTP and expiration time
+        existing_otp.otp_code = otp_code
+        existing_otp.expires_at = expiration_time
+        existing_otp.is_verified = False  # Reset the verification status if needed
+        db.commit()  # Commit the update to the database
+        db.refresh(existing_otp)  # Refresh the instance to get the updated information
+    else:
+        # If no existing OTP, create a new one
+        otp_entry = OTPVerification(
+            phone_number=phone_number,
+            otp_code=otp_code,
+            expires_at=expiration_time
+        )
+        db.add(otp_entry)   # Add OTP to the database session
+        db.commit()         # Commit the transaction to save OTP
+        db.refresh(otp_entry)  # Refresh the instance to get updated information
 
     # Send the OTP via SmartSMS
     payload = {
@@ -139,6 +154,7 @@ async def send_otp(request: OtpPhoneNumberRequest, db: Session = Depends(get_db)
     }
 
     response = requests.post(SMART_SMS_API_URL, data=payload)
+
     print(response.status_code)
     print(response.text)
 
