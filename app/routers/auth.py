@@ -2,18 +2,29 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from sqlalchemy.orm import Session
 from ..database import get_db
 from datetime import datetime
-from ..schemas import LoginSchema, PhoneNumberRequest, OTPVerificationRequest
-from ..utils.otp import verify_otp
+from ..schemas import LoginSchema,OTPVerificationRequest
+# from ..utils.otp import verify_otp
 from ..models import User, RefreshToken, BlacklistedToken
-from ..twilio_client import client, verify_service_sid  # Import the client and verify service SID
 from ..schemas import RefreshTokenRequest, RequestTokenResponse, LogoutRequest
 from ..schemas import pwd_context
+from dotenv import load_dotenv
+import os
+import requests
+from ..utils.otp import generate_otp, OTPVerification, generate_otp_expiration
+from ..utils.schemas_utils import OtpPhoneNumberRequest
 from ..utils.security import  (
     create_access_token,
     create_refresh_token,
     verify_password,
     decode_refresh_token
 ) 
+
+load_dotenv()
+
+# Get environment variables
+SMART_SMS_API_URL = os.getenv("SMART_SMS_API_URL")
+API_KEY = os.getenv("API_KEY")
+SENDER_ID = os.getenv("SENDER_ID")
 
 router = APIRouter()
 
@@ -96,25 +107,56 @@ async def refresh_token(request: RefreshTokenRequest, db: Session = Depends(get_
 
 # SEND OTP
 @router.post("/send-otp/")
-async def send_otp(request: PhoneNumberRequest):
+async def send_otp(request: OtpPhoneNumberRequest, db: Session = Depends(get_db)):
     phone_number = request.phone_number
-    try:
-        verification = client.verify.services(verify_service_sid).verifications.create(
-            to=phone_number,
-            channel="sms"
-        )
-        return {"message": "OTP sent successfully!"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to send OTP: {str(e)}")
+
+    # Generate OTP and expiration time
+    otp_code = generate_otp()
+    expiration_time = generate_otp_expiration()
+
+    # Create OTP entry in the database
+    otp_entry = OTPVerification(
+        phone_number=phone_number,
+        otp_code=otp_code,
+        expires_at=expiration_time
+    )
+    db.add(otp_entry)   # Add OTP to the database session
+    db.commit()         # Commit the transaction to save OTP
+    db.refresh(otp_entry)  # Refresh the instance to get updated information
+
+    # Send the OTP via SmartSMS
+    payload = {
+        'token': API_KEY,
+        'sender': SENDER_ID,
+        'to': phone_number,
+        'message': f"Your Delevia OTP is {otp_code}. It expires in 5 minutes.",
+        'type': '0',  # 0 for text message
+        'routing': '3',  # Set routing
+        'ref_id': 'unique-ref-id',  # Replace if needed
+        'simserver_token': '',
+        'dlr_timeout': '',
+        'schedule': ''
+    }
+
+    response = requests.post(SMART_SMS_API_URL, data=payload)
+    print(response.status_code)
+    print(response.text)
+
+    # Check if the SMS was sent successfully
+    if response.status_code != 200:
+        raise HTTPException(status_code=400, detail="Failed to send OTP")
+
+    return {"message": "OTP sent successfully"}
+
 
 
 # VERIFY OTP
-@router.post("/verify-otp/")
-async def verify_otp_code(request: OTPVerificationRequest, db: Session = Depends(get_db)):
-    if verify_otp(db, request.phone_number, request.otp):
-        return {"message": "OTP verified successfully."}
-    else:
-        raise HTTPException(status_code=400, detail="Invalid OTP or OTP expired.")
+# @router.post("/verify-otp/")
+# async def verify_otp_code(request: OTPVerificationRequest, db: Session = Depends(get_db)):
+#     if verify_otp(db, request.phone_number, request.otp):
+#         return {"message": "OTP verified successfully."}
+#     else:
+#         raise HTTPException(status_code=400, detail="Invalid OTP or OTP expired.")
 
 
 #Logout Endpoint

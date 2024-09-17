@@ -29,7 +29,6 @@ class User(Base):
     # Relationships
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     kyc = relationship("KYC", uselist=False, back_populates="user")
-    otp_verification = relationship("OTPVerification", back_populates="user", uselist=False, cascade="all, delete-orphan")
     rider = relationship("Rider", back_populates="user", uselist=False, cascade="all, delete-orphan")
     driver = relationship("Driver", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
@@ -100,14 +99,13 @@ class OTPVerification(Base):
     __tablename__ = "otp_verification"
 
     id = Column(Integer, primary_key=True, index=True)
-    phone_number = Column(String, ForeignKey("users.phone_number"), unique=True, nullable=False)  # Foreign key to User model
+    phone_number = Column(String, unique=True, nullable=False)  # Foreign key to User model
     otp_code = Column(String, nullable=False)  # The generated OTP code
     is_verified = Column(Boolean, default=False)  # Whether the OTP has been verified
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text('now()'))
     expires_at = Column(TIMESTAMP(timezone=True), nullable=False)  # Expiry timestamp for the OTP
 
-     # Relationship
-    user = relationship("User", back_populates="otp_verification")
+
 
 
 

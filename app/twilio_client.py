@@ -22,3 +22,5 @@ if not all([account_sid, auth_token, twilio_phone_number]):
 
 # Initialize the Twilio client
 client = Client(account_sid, auth_token)
+
+
