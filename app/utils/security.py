@@ -5,7 +5,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import HTTPException, status
 from ..models import RefreshToken, BlacklistedToken
-from ..database import get_db
+from ..database import get_async_db
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 

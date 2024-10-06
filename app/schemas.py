@@ -24,7 +24,7 @@ class UserBase(BaseModel):
     user_status: Optional[UserStatusEnum] = UserStatusEnum.AWAITING  # Default to ACTIVE
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # Create a Pydantic model for the Rider form data
 class RiderCreate(BaseModel):
@@ -34,7 +34,6 @@ class RiderCreate(BaseModel):
     email: str
     password: str
     address: Optional[str] = None
-    prefered_payment_method: PaymentMethodEnum
     rider_photo: UploadFile
 
 # Driver creation schema with license number
@@ -84,7 +83,7 @@ class KycCreate(BaseModel):
     identity_number: str = Field(..., description="Identity number provided by the user")
 
     class Config:
-        orm_mode = True
+        from_attributes = True 
 
 
 # Schema For Refresh Token

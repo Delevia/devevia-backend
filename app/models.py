@@ -1,14 +1,15 @@
-
-
-
 from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, Enum as SQLAEnum, TIMESTAMP, Date, Integer, LargeBinary, DateTime
 from sqlalchemy.orm import relationship
 from .database import Base
 from sqlalchemy.sql.expression import text
-from .enums import UserType, UserStatusEnum, PaymentMethodEnum
+from .enums import UserType, UserStatusEnum, PaymentMethodEnum, RideStatusEnum, RideTypeEnum
 from datetime import datetime
+from sqlalchemy.ext.declarative import declarative_base
 
-# Base User Model
+Base = declarative_base()
+
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -20,17 +21,16 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text('now()'))
     address = Column(String(100), nullable=False)
-    user_type = Column(SQLAEnum(UserType), nullable=False)  # Adding the Enum column
+    user_type = Column(SQLAEnum(UserType), nullable=False)  # Enum column for user type
     user_status = Column(SQLAEnum(UserStatusEnum), default=UserStatusEnum.AWAITING, nullable=False)  
-   
-
-
 
     # Relationships
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     kyc = relationship("KYC", uselist=False, back_populates="user")
     rider = relationship("Rider", back_populates="user", uselist=False, cascade="all, delete-orphan")
     driver = relationship("Driver", back_populates="user", uselist=False, cascade="all, delete-orphan")
+
+
 
 # Rider Model
 class Rider(Base):
@@ -39,11 +39,14 @@ class Rider(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     rider_photo = Column(LargeBinary, nullable=True)  # Store image as binary data (BLOB)
-    prefered_payment_method = Column(SQLAEnum(PaymentMethodEnum), nullable=False)  # Correctly define the Enum type here
     # Add any rider-specific fields here
 
     user = relationship("User", back_populates="rider")
     rides = relationship("Ride", back_populates="rider")
+    ratings = relationship("Rating", back_populates="rider")  
+    payment_methods = relationship("PaymentMethod", back_populates="rider", cascade="all, delete-orphan")
+
+
 
 # Driver Model
 class Driver(Base):
@@ -59,6 +62,8 @@ class Driver(Base):
     vehicle = relationship("Vehicle", back_populates="driver", uselist=False)
     user = relationship("User", back_populates="driver")
     rides = relationship("Ride", back_populates="driver")
+    ratings = relationship("Rating", back_populates="driver")
+
 
 # Vehicle Model
 class Vehicle(Base):
@@ -77,21 +82,32 @@ class Vehicle(Base):
 
     driver = relationship("Driver", back_populates="vehicle", uselist=False)
 
+
 # Ride Model
 class Ride(Base):
     __tablename__ = "rides"
 
     id = Column(Integer, primary_key=True, index=True)
     rider_id = Column(Integer, ForeignKey("riders.id"))
-    driver_id = Column(Integer, ForeignKey("drivers.id"))
+    driver_id = Column(Integer, ForeignKey("drivers.id"), nullable=True)  # Driver is assigned later
     pickup_location = Column(String)
     dropoff_location = Column(String)
-    fare = Column(Float)
-    status = Column(String, default="requested")
+    fare = Column(Float, nullable=True)  # Allow fare to be NULL
+    estimated_price = Column(Float, nullable=True)  # Estimated price is required
+    status = Column(SQLAEnum(RideStatusEnum), default=RideStatusEnum.INITIATED)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text('now()'))
+    ride_type = Column(SQLAEnum(RideTypeEnum), default=RideTypeEnum.STANDARD, nullable=False)  # New 
+    payment_status = Column(String, default="PENDING")  # PENDING, CONFIRMED, FAILED
+    recipient_phone_number = Column(String(15), nullable=True)  # Optional recipient phone number
+    booking_for = Column(String, nullable=False, default='self')  # Add this field
+
+
 
     rider = relationship("Rider", back_populates="rides")
     driver = relationship("Driver", back_populates="rides")
+    rating = relationship("Rating", uselist=False, back_populates="ride")
+
+
 
 
 # OTP Verification Model
@@ -106,9 +122,6 @@ class OTPVerification(Base):
     expires_at = Column(TIMESTAMP(timezone=True), nullable=False)  # Expiry timestamp for the OTP
 
 
-
-
-
 # OTP Admin Model
 class Admin(Base):
     __tablename__ = "admin"
@@ -117,7 +130,7 @@ class Admin(Base):
     department = Column(String, nullable=False)  
     access_level = Column(String, nullable=False)
 
-
+#KYC Endpoint
 class KYC(Base):
     __tablename__ = "kyc"
 
@@ -128,8 +141,7 @@ class KYC(Base):
     # Establish a relationship with the User model
     user = relationship("User", back_populates="kyc")
 
-
-
+# Refresh Token Endpoint
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
 
@@ -150,3 +162,34 @@ class BlacklistedToken(Base):
     id = Column(Integer, primary_key=True, index=True)
     token = Column(String, unique=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Rating(Base):
+    __tablename__ = "ratings"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    ride_id = Column(Integer, ForeignKey("rides.id"), nullable=False)  # Rating associated with a ride
+    driver_id = Column(Integer, ForeignKey("drivers.id"), nullable=False)  # Driver being rated
+    rider_id = Column(Integer, ForeignKey("riders.id"), nullable=False)  # Rider providing the rating
+    rating = Column(Float, nullable=False)  # Rating value (e.g., 1-5)
+    comment = Column(String, nullable=True)  # Optional feedback from the rider
+
+    # Relationships
+    ride = relationship("Ride", back_populates="rating")  # Singular, linking to 'rating' in Ride model
+    driver = relationship("Driver", back_populates="ratings")
+    rider = relationship("Rider", back_populates="ratings")
+
+
+class PaymentMethod(Base):
+    __tablename__ = "payment_methods"
+
+    id = Column(Integer, primary_key=True, index=True)
+    rider_id = Column(Integer, ForeignKey("riders.id"), nullable=False)  # This links to the User model
+    payment_type = Column(SQLAEnum(PaymentMethodEnum), nullable=False)
+    card_number = Column(String(16), nullable=True)  # Store tokenized data, not real card number
+    expiry_date = Column(String(5), nullable=True)  # MM/YY format for credit cards
+    token = Column(String, nullable=True)  # Tokenized data from payment provider
+    is_default = Column(Boolean, default=False)
+
+    # Relationship back to User (not directly to Rider)
+    rider = relationship("Rider", back_populates="payment_methods")

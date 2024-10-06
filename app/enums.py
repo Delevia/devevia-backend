@@ -1,6 +1,6 @@
 from enum import Enum
 
-class UserType(Enum):
+class UserType(str, Enum):
     RIDER = "RIDER"
     DRIVER = "DRIVER"
 
@@ -12,17 +12,27 @@ class UserStatusEnum(str, Enum):
     DISABLED = "DISABLED"
 
 
-class PaymentMethodEnum(Enum):
-    CREDIT_CARD = "credit_card"
+class PaymentMethodEnum(str, Enum):
     DEBIT_CARD = "debit_card"
     CASH = "cash"
     WALLET = "wallet"
-    PAYPAL = "paypal"  # Example of an additional method
 
 
 class RideStatusEnum(str, Enum):
-    PENDING = "APPROVED"
+    INITIATED = 'INITIATED'
+    PENDING = "PENDING"
     ACCEPTED = "ACCEPTED"
     REJECTED = "REJECTED"
     ONGOING = "ONGOING"
     COMPLETED = "COMPLETED"
+
+
+class RideTypeEnum(str, Enum):
+    STANDARD = "STANDARD "
+    VIP = "VIP"
+
+
+class RidePaymentStatus(str, Enum):
+    PENDING = "PENDING"
+    PAID = "PAID"
+

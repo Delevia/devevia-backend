@@ -1,30 +1,28 @@
-# app/database.py
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base
+from sqlalchemy import MetaData
 
-# Database URL for PostgreSQL
-DATABASE_URL = "postgresql://postgres:eternity@localhost/Delevia"
+# Database URL
+DATABASE_URL = "postgresql+asyncpg://postgres:eternity@localhost/Delevia"
 
-# If using SQLite, you can use:
-# DATABASE_URL = "sqlite:///./test.db"
+# Set up the async engine with optional echo for debugging
+async_engine = create_async_engine(DATABASE_URL, future=True, echo=True)
 
-# Create the SQLAlchemy engine
-engine = create_engine(DATABASE_URL)
+# Create a sessionmaker for the async session
+async_session = sessionmaker(
+    bind=async_engine,
+    expire_on_commit=False,
+    class_=AsyncSession
+)
 
-# Create a configured "Session" class
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# Create a base class for our models
+# Base model for declarative class definitions
 Base = declarative_base()
 
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
+# Get the async database session
+async def get_async_db():
+    async with async_session() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
