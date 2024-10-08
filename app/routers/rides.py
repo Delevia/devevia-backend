@@ -318,8 +318,9 @@ async def complete_ride(
         if ride.driver_id != driver_id:
             raise HTTPException(status_code=403, detail="You are not authorized to complete this ride")
 
-        # Update the ride status to COMPLETED
+        # Update the ride status to COMPLETED and set the fare to the estimated price
         ride.status = RideStatusEnum.COMPLETED
+        ride.fare = ride.estimated_price  # Set fare to the estimated price
 
         # Save the updated ride status
         db.add(ride)
@@ -335,7 +336,7 @@ async def complete_ride(
                 "status": ride.status,
                 "pickup_location": ride.pickup_location,
                 "dropoff_location": ride.dropoff_location,
-                "fare": ride.fare  # Assuming the fare is already calculated and stored
+                "fare": ride.fare  
             }
         }
 
@@ -567,14 +568,15 @@ async def update_payment_method(
 
 # Modify Ride Price
 @router.put("/rides/{ride_id}/modify_price", response_model=ModifyRideResponse)
-def modify_ride_price(
+async def modify_ride_price(
     ride_id: int, 
     request: ModifyRidePriceRequest,
     rider_id: int,  # Rider ID passed as part of the request
-    db: Session = Depends(get_async_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
-    # Fetch the ride by ride_id
-    ride = db.query(Ride).filter(Ride.id == ride_id).first()
+    # Fetch the ride by ride_id using async select()
+    result = await db.execute(select(Ride).filter(Ride.id == ride_id))
+    ride = result.scalar()  # Get the first result
     
     # Check if the ride exists
     if not ride:
@@ -596,7 +598,17 @@ def modify_ride_price(
     ride.estimated_price = request.new_price  # Use the new price from the request
     
     # Commit the changes
-    db.commit()
-    db.refresh(ride)
+    db.add(ride)  # Add the modified ride to the session
+    await db.commit()  # Commit changes asynchronously
+    await db.refresh(ride)  # Refresh the ride instance with new data
     
-    return ride
+    # Return the updated ride details as the response model
+    return ModifyRideResponse(
+        id=ride.id,
+        rider_id=ride.rider_id,
+        driver_id=ride.driver_id,
+        estimated_price=ride.estimated_price,
+        status=ride.status,
+        pickup_location=ride.pickup_location,
+        dropoff_location=ride.dropoff_location
+    )

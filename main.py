@@ -1,6 +1,6 @@
 from fastapi import FastAPI
-from .routers import auth, users, rides
-from .database import Base, async_engine  # Import async_engine from your database module
+from app.routers import auth, users, rides
+from app.database import Base, async_engine  # Import async_engine from your database module
 from sqlalchemy.ext.asyncio import AsyncSession
 import asyncio
 
