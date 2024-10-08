@@ -4,17 +4,18 @@ from ..database import get_async_db
 from ..models import  Ride, Rating, Driver, Rider, PaymentMethod
 from ..utils.rides_utility_functions import find_drivers_nearby, categorize_drivers_by_rating, update_driver_rating, tokenize_card
 from ..enums import RideStatusEnum, PaymentMethodEnum
-from ..utils.rides_schemas import RatingRequest, PaymentMethodRequest, RideRequest
+from ..utils.rides_schemas import RatingRequest, PaymentMethodRequest, RideRequest, ModifyRidePriceRequest, ModifyRideResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..utils.rides_utility_functions import calculate_estimated_price
 from sqlalchemy.future import select
 import traceback
 from sqlalchemy import update
+import logging  # Added logging for debugging
+
 
 
 
 router = APIRouter()
-
 
 # Ride Request Endpoint using RideRequest Schema
 @router.post("/ride/request", status_code=status.HTTP_200_OK)
@@ -30,9 +31,28 @@ async def request_ride(
             detail="Recipient phone number is required when booking for someone else."
         )
 
+    # Ensure the rider exists in the `riders` table
+    result = await db.execute(select(Rider).filter(Rider.id == rider_id))
+    rider = result.scalars().first()
+    if not rider:
+        raise HTTPException(status_code=404, detail="Rider not found")
+
     # Calculate the estimated prices for both STANDARD and VIP rides
-    standard_price = calculate_estimated_price(request.pickup_location, request.dropoff_location, ride_type="STANDARD ")
-    vip_price = calculate_estimated_price(request.pickup_location, request.dropoff_location, ride_type="VIP")
+    try:
+        standard_price = calculate_estimated_price(
+            request.pickup_location, request.dropoff_location, ride_type="STANDARD"
+        )
+        logging.info(f"Calculated STANDARD price: {standard_price}")  # Logging for debug
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error calculating STANDARD price: {e}")
+
+    try:
+        vip_price = calculate_estimated_price(
+            request.pickup_location, request.dropoff_location, ride_type="VIP"
+        )
+        logging.info(f"Calculated VIP price: {vip_price}")  # Logging for debug
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error calculating VIP price: {e}")
 
     # Store the ride as 'INITIATED' in the database
     new_ride = Ride(
@@ -46,26 +66,31 @@ async def request_ride(
     )
 
     try:
-        async with db.begin():
+        async with db.begin_nested():  # Ensure transaction safety
             db.add(new_ride)
             await db.flush()  # Save the new ride in the database
-        
-        await db.refresh(new_ride)
+            logging.info(f"New ride created with ID: {new_ride.id}")  # Log ride ID
+            await db.commit()  # Commit the transaction
+
+        await db.refresh(new_ride)  # Refresh to get the updated ride data
+
+        # Log final ride details
+        logging.info(f"Ride after commit: {new_ride}")
 
         # Return the ride options with estimated prices
         return {
             "message": "Ride options",
             "ride_id": new_ride.id,  # Return the ride ID for future references
             "estimated_prices": {
-                "STANDARD ": standard_price,
-                "vip": vip_price
+                "STANDARD": standard_price,  # Corrected typo
+                "VIP": vip_price  # Corrected key name to uppercase
             }
         }
     except Exception as e:
-        await db.rollback()
+        await db.rollback()  # Ensure the transaction is rolled back on error
+        logging.error(f"An error occurred during ride request: {e}")  # Log error details
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
-
-
+    
 
 # Select Ride Type
 @router.post("/ride/select", status_code=status.HTTP_200_OK)
@@ -79,25 +104,41 @@ async def select_ride_type(
     if ride_type not in ["VIP", "STANDARD"]:
         raise HTTPException(status_code=400, detail="Invalid ride type. Must be 'VIP' or 'STANDARD'.")
 
-    # Calculate estimated price based on the selected ride type (use static values here)
-    if ride_type == "VIP":
-        estimated_price = 300  # Static VIP price
-    else:
-        estimated_price = 200  # Static STANDARD price
+    # Calculate estimated price based on the selected ride type
+    estimated_price = 300 if ride_type == "VIP" else 200  # Static prices
 
-    # Assign a default driver (driver_id = 1)
-    driver_id = 1
-    
+    # Fetch the rider to ensure it exists
+    result = await db.execute(select(Rider).filter(Rider.id == rider_id))
+    rider = result.scalars().first()
+    if not rider:
+        raise HTTPException(status_code=404, detail="Rider not found.")
+
+    # Fetch the ride by ride_id
+    result = await db.execute(select(Ride).filter(Ride.id == ride_id))
+    ride = result.scalars().first()
+
+    # Check if the ride exists
+    if not ride:
+        raise HTTPException(status_code=404, detail="Ride not found")
+
+    # Update the ride with the selected ride type and estimated price
+    ride.ride_type = ride_type
+    ride.estimated_price = estimated_price
+
+    # Commit the changes to the database
+    await db.commit()
+    await db.refresh(ride)
+
+    # Assign a default driver (driver_id = 1) if needed
+
     return {
         "message": f"{ride_type} ride selected. Please confirm the ride.",
         "rider_id": rider_id,
-        "ride_id": ride_id,   # Include the ride ID in the response
+        "ride_id": ride_id,
         "ride_type": ride_type,
-        "driver_id": driver_id,
         "estimated_price": estimated_price,
         "confirmation_required": True
     }
-
 
 
 # Driver Accept Ride Endpoint
@@ -148,8 +189,6 @@ async def accept_ride(
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
     
-
-
  
 
 # Confirm Ride Endpoint
@@ -211,7 +250,6 @@ async def confirm_ride(
 
 
 
-
 #Start Ride Endpoint
 @router.post("/ride/start/{ride_id}", status_code=status.HTTP_200_OK)
 async def start_ride(
@@ -257,7 +295,6 @@ async def start_ride(
         # Rollback in case of an error
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
-
 
 
 # Complete Ride Endpoint
@@ -526,3 +563,40 @@ async def update_payment_method(
             "is_default": payment_method.is_default
         }
     }
+
+
+# Modify Ride Price
+@router.put("/rides/{ride_id}/modify_price", response_model=ModifyRideResponse)
+def modify_ride_price(
+    ride_id: int, 
+    request: ModifyRidePriceRequest,
+    rider_id: int,  # Rider ID passed as part of the request
+    db: Session = Depends(get_async_db)
+):
+    # Fetch the ride by ride_id
+    ride = db.query(Ride).filter(Ride.id == ride_id).first()
+    
+    # Check if the ride exists
+    if not ride:
+        raise HTTPException(status_code=404, detail="Ride not found")
+    
+    # Ensure that the rider ID matches the one associated with the ride
+    if ride.rider_id != rider_id:
+        raise HTTPException(status_code=403, detail="Unauthorized to modify this ride")
+    
+    # Ensure the ride is in the PENDING state
+    if ride.status != RideStatusEnum.PENDING:
+        raise HTTPException(status_code=400, detail="Cannot modify price for non-pending rides")
+    
+    # Check if the new price is greater than the initial price
+    if request.new_price <= ride.estimated_price:
+        raise HTTPException(status_code=400, detail="New price must be greater than the current estimated price")
+    
+    # Update the price
+    ride.estimated_price = request.new_price  # Use the new price from the request
+    
+    # Commit the changes
+    db.commit()
+    db.refresh(ride)
+    
+    return ride

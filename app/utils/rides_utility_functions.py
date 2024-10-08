@@ -71,7 +71,7 @@ def update_driver_rating(driver: Driver, new_rating: float, db: Session):
 def calculate_estimated_price(pickup_location: str, dropoff_location: str, ride_type: str):
     # Dummy function to calculate price based on location and ride type
     # You can implement actual distance-based calculation here
-    if ride_type == "REGULAR":
+    if ride_type == "STANDARD":
         return 200  # Static regular price
     elif ride_type == "VIP":
         return 300  # Static VIP price

@@ -82,6 +82,19 @@ class PaymentMethodRequest(BaseModel):
         return values
 
     class Config:
-        orm_mode = True
+        from_attributes = True
+
+class ModifyRidePriceRequest(BaseModel):
+    new_price: float = Field(..., gt=0, description="The new price for the ride, must be greater than zero.")
 
 
+# Modify Ride
+class ModifyRideResponse(BaseModel):
+    id: int
+    rider_id: int
+    pickup_location: str
+    dropoff_location: str
+    estimated_price: float
+
+    class Config:
+        from_attributes = True
