@@ -236,7 +236,7 @@ async def confirm_ride(
         await db.refresh(ride)
 
         return {
-            "message": "Ride confirmed and awaiting driver's acceptance.",
+            "message": "Ride confirmed, waiting to be matched with a driver.",
             "ride_id": ride.id,
             "status": ride.status,
             "payment_method": payment_method.payment_type
