@@ -36,3 +36,8 @@ class RidePaymentStatus(str, Enum):
     PENDING = "PENDING"
     PAID = "PAID"
 
+
+class WalletTransactionEnum(str, Enum):
+    CREDIT = 'CREDIT'
+    DEBIT = 'DEBIT' 
+

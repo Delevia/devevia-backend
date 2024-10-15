@@ -5,11 +5,12 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import Session
 from datetime import date
 from ..database import get_async_db
-from ..models import User, Rider, Driver, KYC, Admin
+from ..models import User, Rider, Driver, KYC, Admin, Wallet
 from ..schemas import KycCreate, AdminCreate, get_password_hash
 from ..enums import PaymentMethodEnum
 from ..utils.schemas_utils import UserProfileResponse
 from ..utils.utils_dependencies_files import get_current_user
+from ..utils.wallet_utilitity_functions import generate_account_number
 import logging
 import os
 
@@ -69,6 +70,13 @@ async def signup_rider(
         await db.commit()
         await db.refresh(db_user)
 
+        # Create wallet for the user with a random 10-digit account number
+        account_number = generate_account_number()
+        db_wallet = Wallet(user_id=db_user.id, balance=0.0, account_number=account_number)
+        db.add(db_wallet)
+        await db.commit()
+        await db.refresh(db_wallet)
+
     # Save rider-specific data
     file_content = await rider_photo.read()
     db_rider = Rider(
@@ -79,7 +87,7 @@ async def signup_rider(
     await db.commit()
     await db.refresh(db_rider)
 
-    return {"message": "Rider registration successful"}
+    return {"message": "Rider registration successful", "account_number": account_number}
 
 # Driver Signup Endpoint
 @router.post("/signup/driver/", status_code=status.HTTP_201_CREATED)
@@ -145,6 +153,13 @@ async def signup_driver(
         await db.commit()
         await db.refresh(db_user)
 
+        # Create wallet for the user
+        account_number = generate_account_number()
+        db_wallet = Wallet(user_id=db_user.id, balance=0.0, account_number=account_number)
+        db.add(db_wallet)
+        await db.commit()
+        await db.refresh(db_wallet)
+
     # Save driver-specific data
     file_content = await driver_photo.read()
     db_driver = Driver(
@@ -163,7 +178,8 @@ async def signup_driver(
         existing_user.user_type = "DRIVER"
         await db.commit()
 
-    return {"message": "Driver registration successful"}
+    return {"message": "Driver registration successful", "account_number": account_number}
+
 
 # Create a KYC
 @router.post("/kyc/", status_code=status.HTTP_201_CREATED)

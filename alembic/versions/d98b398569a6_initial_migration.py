@@ -1,8 +1,8 @@
 """Initial migration
 
-Revision ID: e87cb7aa5906
+Revision ID: d98b398569a6
 Revises: 
-Create Date: 2024-10-07 17:00:23.728378
+Create Date: 2024-10-13 15:33:20.881909
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'e87cb7aa5906'
+revision: str = 'd98b398569a6'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -108,6 +108,17 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_riders_id'), 'riders', ['id'], unique=False)
+    op.create_table('wallets',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('user_id', sa.Integer(), nullable=True),
+    sa.Column('balance', sa.Float(), nullable=True),
+    sa.Column('account_number', sa.String(), nullable=False),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('account_number'),
+    sa.UniqueConstraint('user_id')
+    )
+    op.create_index(op.f('ix_wallets_id'), 'wallets', ['id'], unique=False)
     op.create_table('payment_methods',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('rider_id', sa.Integer(), nullable=False),
@@ -139,6 +150,16 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_rides_id'), 'rides', ['id'], unique=False)
+    op.create_table('transactions',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('wallet_id', sa.Integer(), nullable=True),
+    sa.Column('amount', sa.Float(), nullable=True),
+    sa.Column('transaction_type', sa.Enum('CREDIT', 'DEBIT', name='wallet_transaction_enum'), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['wallet_id'], ['wallets.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_transactions_id'), 'transactions', ['id'], unique=False)
     op.create_table('vehicles',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('driver_id', sa.Integer(), nullable=True),
@@ -191,10 +212,14 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_vehicles_id'), table_name='vehicles')
     op.drop_index(op.f('ix_vehicles_color'), table_name='vehicles')
     op.drop_table('vehicles')
+    op.drop_index(op.f('ix_transactions_id'), table_name='transactions')
+    op.drop_table('transactions')
     op.drop_index(op.f('ix_rides_id'), table_name='rides')
     op.drop_table('rides')
     op.drop_index(op.f('ix_payment_methods_id'), table_name='payment_methods')
     op.drop_table('payment_methods')
+    op.drop_index(op.f('ix_wallets_id'), table_name='wallets')
+    op.drop_table('wallets')
     op.drop_index(op.f('ix_riders_id'), table_name='riders')
     op.drop_table('riders')
     op.drop_index(op.f('ix_refresh_tokens_id'), table_name='refresh_tokens')

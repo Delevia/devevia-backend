@@ -1,8 +1,6 @@
 from fastapi import FastAPI
-from app.routers import auth, users, rides
+from app.routers import auth, users, rides, wallet
 from app.database import Base, async_engine  # Import async_engine from your database module
-from sqlalchemy.ext.asyncio import AsyncSession
-import asyncio
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -22,5 +20,6 @@ async def on_startup():
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(users.router, prefix="/users", tags=["Users"])
 app.include_router(rides.router, prefix="/rides", tags=["Rides"])
+app.include_router(wallet.router, prefix="/wallet", tags=["Wallet"])
 
-# You can also add other global settings, middleware, etc., here if needed.
+
