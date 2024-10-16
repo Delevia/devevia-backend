@@ -40,4 +40,5 @@ class RidePaymentStatus(str, Enum):
 class WalletTransactionEnum(str, Enum):
     CREDIT = 'CREDIT'
     DEBIT = 'DEBIT' 
+    REFERRAL_BONUS = 'REFERRALBONUS'
 

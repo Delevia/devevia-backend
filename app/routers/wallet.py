@@ -104,9 +104,9 @@ async def deduct_funds(account_number: str, transaction: TransactionCreate, db: 
 
 # Get the wallet transaction history for a wallet (by account number)
 @router.get("/wallets/{account_number}/history", response_model=list[TransactionHistoryResponse])
-async def get_wallet_history(account_number: str, db: AsyncSession = Depends(get_async_db)):
+async def get_wallet_history(user_id: int, db: AsyncSession = Depends(get_async_db)):
     # Query the wallet by account number
-    result = await db.execute(select(Wallet).filter(Wallet.account_number == account_number))
+    result = await db.execute(select(Wallet).filter(Wallet.user_id == user_id ))
     wallet = result.scalars().first()
 
     # Raise error if wallet not found

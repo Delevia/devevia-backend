@@ -6,6 +6,9 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from ..import models
 from ..database import get_async_db
+import hashlib
+import uuid
+
 
 
 # Secret key for JWT token validation
@@ -41,3 +44,13 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
 
     return user
+
+
+
+
+def generate_hashed_referral_code():
+    new_uuid = uuid.uuid4()
+    # Create a hash from the UUID
+    hash_object = hashlib.sha256(new_uuid.bytes)
+    # Get the first 8 characters of the hex digest
+    return hash_object.hexdigest()[:10]

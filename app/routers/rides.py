@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status, Depends
 from sqlalchemy.orm import Session
 from ..database import get_async_db
-from ..models import  Ride, Rating, Driver, Rider, PaymentMethod
+from ..models import  Ride, Rating, Driver, Rider, PaymentMethod, Wallet, Referral, Transaction
 from ..utils.rides_utility_functions import find_drivers_nearby, categorize_drivers_by_rating, update_driver_rating, tokenize_card
 from ..enums import RideStatusEnum, PaymentMethodEnum
 from ..utils.rides_schemas import RatingRequest, PaymentMethodRequest, RideRequest, ModifyRidePriceRequest, ModifyRideResponse
@@ -11,6 +11,9 @@ from sqlalchemy.future import select
 import traceback
 from sqlalchemy import update
 import logging  # Added logging for debugging
+from datetime import datetime
+from ..enums import WalletTransactionEnum
+
 
 
 
@@ -297,6 +300,8 @@ async def start_ride(
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
 
+from datetime import datetime
+
 # Complete Ride Endpoint
 @router.post("/ride/complete/{ride_id}", status_code=status.HTTP_200_OK)
 async def complete_ride(
@@ -327,6 +332,36 @@ async def complete_ride(
         await db.commit()  # Commit the transaction to save changes
         await db.refresh(ride)  # Refresh the ride instance after committing
 
+        # Check if the rider was referred by another rider
+        referral_query = select(Referral).filter(Referral.referred_rider_id == ride.rider_id)
+        referral = (await db.execute(referral_query)).scalars().first()
+
+        if referral:
+            # Calculate 3% of the fare
+            referral_bonus = ride.fare * 0.03
+
+            # Fetch the referrer's wallet
+            wallet_query = select(Wallet).filter(Wallet.user_id == referral.referrer_id)
+            referrer_wallet = (await db.execute(wallet_query)).scalars().first()
+
+            if referrer_wallet:
+                # Add the bonus to the referrer's wallet balance
+                referrer_wallet.balance += referral_bonus
+                db.add(referrer_wallet)  # Update the referrer's wallet
+
+                # Create a transaction history for the referral bonus
+                transaction = Transaction(
+                    wallet_id=referrer_wallet.id,
+                    amount=referral_bonus,
+                    transaction_type=WalletTransactionEnum.REFERRAL_BONUS,  # Assuming you have this enum type
+                    created_at=datetime.utcnow()
+                )
+                
+                db.add(transaction)  # Add the transaction to the session
+
+                # Commit the changes
+                await db.commit()
+
         return {
             "message": "Ride completed successfully",
             "ride": {
@@ -344,7 +379,6 @@ async def complete_ride(
         # Rollback in case of an error
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
-
 
 
 # Cancel Ride Endpoint

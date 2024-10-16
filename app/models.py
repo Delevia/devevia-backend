@@ -5,6 +5,9 @@ from sqlalchemy.sql.expression import text
 from .enums import UserType, UserStatusEnum, PaymentMethodEnum, RideStatusEnum, RideTypeEnum, WalletTransactionEnum
 from datetime import datetime
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.sql import func  # Import func to use for timestamp
+import uuid
+
 
 Base = declarative_base()
 
@@ -30,6 +33,19 @@ class User(Base):
     driver = relationship("Driver", back_populates="user", uselist=False)
     wallet = relationship("Wallet", uselist=False, back_populates="user")
 
+
+class Referral(Base):
+    __tablename__ = 'referrals'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    referrer_id = Column(Integer, ForeignKey('riders.id'), nullable=False)  # Referring rider
+    referred_rider_id = Column(Integer, ForeignKey('riders.id'), nullable=False)  # Referred rider
+    created_at = Column(DateTime(timezone=True), server_default=func.now())  # Timestamp for when referral occurred
+
+    referrer = relationship("Rider", foreign_keys=[referrer_id], back_populates="referrals_made")
+    referred_rider = relationship("Rider", foreign_keys=[referred_rider_id], back_populates="referred_by")
+
+
 # Rider Model
 class Rider(Base):
     __tablename__ = "riders"
@@ -37,12 +53,16 @@ class Rider(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     rider_photo = Column(LargeBinary, nullable=True)
+    referral_code = Column(String(10), unique=True)  # UUID string for referral code
     
     user = relationship("User", back_populates="rider")
     rides = relationship("Ride", back_populates="rider")
     ratings = relationship("Rating", back_populates="rider")
     payment_methods = relationship("PaymentMethod", back_populates="rider")
+    referrals_made = relationship('Referral', foreign_keys=[Referral.referrer_id], back_populates="referrer")
+    referred_by = relationship('Referral', foreign_keys=[Referral.referred_rider_id], back_populates="referred_rider")
 
+   
 # Driver Model
 class Driver(Base):
     __tablename__ = "drivers"
@@ -203,3 +223,5 @@ class Transaction(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     wallet = relationship("Wallet", back_populates="transactions")
+
+

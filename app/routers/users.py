@@ -5,11 +5,10 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import Session
 from datetime import date
 from ..database import get_async_db
-from ..models import User, Rider, Driver, KYC, Admin, Wallet
+from ..models import User, Rider, Driver, KYC, Admin, Wallet, Referral
 from ..schemas import KycCreate, AdminCreate, get_password_hash
-from ..enums import PaymentMethodEnum
 from ..utils.schemas_utils import UserProfileResponse
-from ..utils.utils_dependencies_files import get_current_user
+from ..utils.utils_dependencies_files import get_current_user, generate_hashed_referral_code
 from ..utils.wallet_utilitity_functions import generate_account_number
 import logging
 import os
@@ -42,6 +41,7 @@ async def signup_rider(
     password: str = Form(...),
     address: Optional[str] = Form(None),
     rider_photo: UploadFile = File(...),
+    referral_code: Optional[str] = Form(None),  # Add referral code field
     db: AsyncSession = Depends(get_async_db)
 ):
     # Check if the user exists by phone number and email
@@ -55,7 +55,7 @@ async def signup_rider(
         if existing_rider:
             raise HTTPException(status_code=400, detail="User already registered as a Rider.")
     else:
-        # If no existing user, create a new one
+        # Create new user and rider
         hashed_password = get_password_hash(password)
         db_user = User(
             full_name=full_name,
@@ -70,24 +70,40 @@ async def signup_rider(
         await db.commit()
         await db.refresh(db_user)
 
-        # Create wallet for the user with a random 10-digit account number
+        # Create wallet for the user
         account_number = generate_account_number()
         db_wallet = Wallet(user_id=db_user.id, balance=0.0, account_number=account_number)
         db.add(db_wallet)
         await db.commit()
         await db.refresh(db_wallet)
 
-    # Save rider-specific data
-    file_content = await rider_photo.read()
-    db_rider = Rider(
-        user_id=existing_user.id if existing_user else db_user.id,
-        rider_photo=file_content,
-    )
-    db.add(db_rider)
-    await db.commit()
-    await db.refresh(db_rider)
+        # Save rider-specific data
+        file_content = await rider_photo.read()
+        db_rider = Rider(
+            user_id=db_user.id,
+            rider_photo=file_content,
+        )
+        db.add(db_rider)
+        await db.commit()
+        await db.refresh(db_rider)
+
+        # Handle referral code if provided
+        if referral_code:
+            # Fetch the referrer by the referral code
+            referrer = await db.execute(select(Rider).filter(Rider.referral_code == referral_code))
+            referrer_rider = referrer.scalars().first()
+
+            if referrer_rider:
+                # Create a referral record
+                referral = Referral(
+                    referrer_id=referrer_rider.id,
+                    referred_rider_id=db_rider.id
+                )
+                db.add(referral)
+                await db.commit()
 
     return {"message": "Rider registration successful", "account_number": account_number}
+
 
 # Driver Signup Endpoint
 @router.post("/signup/driver/", status_code=status.HTTP_201_CREATED)
@@ -256,3 +272,38 @@ async def get_user_profile(current_user: User = Depends(get_current_user), db: A
     )
     return user_profile_response
 
+
+# Referal Code Endpoint
+@router.get("/rider/referral-code/{rider_id}", status_code=status.HTTP_200_OK)
+async def get_referral_code(rider_id: int, db: AsyncSession = Depends(get_async_db)):
+    # Ensure the rider exists in the database
+    result = await db.execute(select(Rider).filter(Rider.id == rider_id))
+    rider = result.scalars().first()
+
+    if not rider:
+        raise HTTPException(status_code=404, detail="Rider not found")
+
+    # Check if the rider already has a referral code
+    if rider.referral_code:
+        return {
+            "referral_code": rider.referral_code
+        }
+
+    # Generate a new referral code
+    referral_code = generate_hashed_referral_code()
+
+    # Set the new referral code
+    rider.referral_code = referral_code
+
+    # Commit the changes to the database
+    try:
+        db.add(rider)  # Mark the rider instance for update
+        await db.commit()  # Commit the transaction
+        await db.refresh(rider)  # Refresh the rider instance
+    except Exception as e:
+        await db.rollback()  # Rollback in case of error
+        raise HTTPException(status_code=500, detail=f"An error occurred while saving the referral code: {e}")
+
+    return {
+        "referral_code": rider.referral_code
+    }
