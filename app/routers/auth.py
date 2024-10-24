@@ -2,12 +2,13 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_async_db  # Ensure to update this to get the async session
 from ..schemas import LoginSchema
-from ..models import User, RefreshToken, BlacklistedToken
+from ..models import User, RefreshToken, BlacklistedToken, Rider
 from ..schemas import RefreshTokenRequest, RequestTokenResponse, LogoutRequest
 from ..schemas import pwd_context
 from dotenv import load_dotenv
 import os
 import requests
+from sqlalchemy.future import select
 from ..utils.otp import generate_otp, OTPVerification, generate_otp_expiration
 from ..utils.schemas_utils import OtpPhoneNumberRequest
 from ..utils.security import (
@@ -16,6 +17,8 @@ from ..utils.security import (
     verify_password,
     decode_refresh_token
 )
+from sqlalchemy.orm import joinedload
+
 
 load_dotenv()
 
@@ -30,32 +33,45 @@ router = APIRouter()
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
-# Rider Login Endpoint
+
+# Rider LOgin Endpoint
 @router.post("/login/rider/", status_code=status.HTTP_200_OK)
 async def login_rider(
     login_data: LoginSchema,
     db: AsyncSession = Depends(get_async_db)
 ):
+    # Query the user with the phone number and ensure user_type is "RIDER"
     async with db as session:
-        rider = await session.execute(
-            User.select().filter(User.phone_number == login_data.phone_number, User.user_type == "RIDER")
+        result = await session.execute(
+            select(User)
+            .options(joinedload(User.rider))  # Eager load the rider relationship
+            .filter(User.phone_number == login_data.phone_number, User.user_type == "RIDER")
         )
-        rider = rider.scalar()
+        user = result.scalar()  # Fetch the user object
 
-        if not rider or not verify_password(login_data.password, rider.hashed_password):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid phone number or password")
+    # Validate the user's existence and password
+    if not user or not verify_password(login_data.password, user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid phone number or password")
 
-        access_token = create_access_token(data={"sub": str(rider.id)})
-        refresh_token = await create_refresh_token(data={"sub": str(rider.id)}, db=session)
+    # The rider is already loaded, so we don't hit the DetachedInstanceError
+    rider = user.rider
 
-        return {
-            "message": "Login Successful",
-            "user_id": rider.id,
-            "user_type": rider.user_type,
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "bearer"
-        }
+    if not rider:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rider not found")
+
+    # Generate tokens for the rider
+    access_token = create_access_token(data={"sub": str(rider.id)})
+    refresh_token = create_refresh_token(data={"sub": str(rider.id)}, db=db)
+
+    # Return a response with rider ID and tokens
+    return {
+        "message": "Login Successful",
+        "user_type": user.user_type,  # User type should be "DRIVER"
+        "rider_id": rider.id,  # Return the rider ID here
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer"
+    }
 
 # Driver Login Endpoint
 @router.post("/login/driver/", status_code=status.HTTP_200_OK)
@@ -63,26 +79,38 @@ async def login_driver(
     login_data: LoginSchema,
     db: AsyncSession = Depends(get_async_db)
 ):
+    # Query the user with the phone number and ensure user_type is "DRIVER"
     async with db as session:
-        driver = await session.execute(
-            User.select().filter(User.phone_number == login_data.phone_number, User.user_type == "DRIVER")
+        result = await session.execute(
+            select(User)
+            .options(joinedload(User.driver))  # Eager load the driver relationship
+            .filter(User.phone_number == login_data.phone_number, User.user_type == "DRIVER")
         )
-        driver = driver.scalar()
+        user = result.scalar()  # Fetch the user object
 
-        if not driver or not verify_password(login_data.password, driver.hashed_password):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid phone number or password")
+    # Validate the driver's existence and password
+    if not user or not verify_password(login_data.password, user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid phone number or password")
 
-        access_token = create_access_token(data={"sub": str(driver.id)})
-        refresh_token = await create_refresh_token(data={"sub": str(driver.id)}, db=session)
+    # Get the associated driver from the user
+    driver = user.driver
 
-        return {
-            "message": "Login Successful",
-            "user_id": driver.id,
-            "user_type": driver.user_type,
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "bearer"
-        }
+    if not driver:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Driver not found")
+
+    # Generate tokens for the driver
+    access_token = create_access_token(data={"sub": str(driver.id)})
+    refresh_token = create_refresh_token(data={"sub": str(driver.id)}, db=db)  # Add await for async call
+
+    # Return a response with driver ID and tokens
+    return {
+        "message": "Login Successful",
+        "user_type": user.user_type,  # User type should be "DRIVER"
+        "driver_id": driver.id,  # Return the driver ID here
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer"
+    }
 
 # Refresh Token Endpoint to get new Access Token
 @router.post("/refresh", response_model=RequestTokenResponse)

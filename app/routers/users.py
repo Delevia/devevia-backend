@@ -44,18 +44,44 @@ async def signup_rider(
     referral_code: Optional[str] = Form(None),  # Add referral code field
     db: AsyncSession = Depends(get_async_db)
 ):
-    # Check if the user exists by phone number and email
-    query = select(User).filter(User.phone_number == phone_number, User.email == email)
-    existing_user = (await db.execute(query)).scalars().first()
+    async with db as session:
+        # Check if email already exists
+        existing_email = await session.execute(
+            select(User).filter(User.email == email)
+        )
+        existing_email = existing_email.scalars().first()
 
-    if existing_user:
-        # Check if the user is already a rider
-        query = select(Rider).filter(Rider.user_id == existing_user.id)
-        existing_rider = (await db.execute(query)).scalars().first()
-        if existing_rider:
-            raise HTTPException(status_code=400, detail="User already registered as a Rider.")
-    else:
-        # Create new user and rider
+        if existing_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A user with this email is already registered."
+            )
+
+        # Check if phone number already exists
+        existing_phone = await session.execute(
+            select(User).filter(User.phone_number == phone_number)
+        )
+        existing_phone = existing_phone.scalars().first()
+
+        if existing_phone:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A user with this phone number is already registered."
+            )
+
+        # Check if username already exists
+        existing_username = await session.execute(
+            select(User).filter(User.user_name == user_name)
+        )
+        existing_username = existing_username.scalars().first()
+
+        if existing_username:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A user with this username is already registered."
+            )
+
+        # If no duplicates are found, proceed with creating the user
         hashed_password = get_password_hash(password)
         db_user = User(
             full_name=full_name,
@@ -66,16 +92,16 @@ async def signup_rider(
             address=address,
             user_type="RIDER"
         )
-        db.add(db_user)
-        await db.commit()
-        await db.refresh(db_user)
+        session.add(db_user)
+        await session.commit()
+        await session.refresh(db_user)
 
         # Create wallet for the user
         account_number = generate_account_number()
         db_wallet = Wallet(user_id=db_user.id, balance=0.0, account_number=account_number)
-        db.add(db_wallet)
-        await db.commit()
-        await db.refresh(db_wallet)
+        session.add(db_wallet)
+        await session.commit()
+        await session.refresh(db_wallet)
 
         # Save rider-specific data
         file_content = await rider_photo.read()
@@ -83,26 +109,27 @@ async def signup_rider(
             user_id=db_user.id,
             rider_photo=file_content,
         )
-        db.add(db_rider)
-        await db.commit()
-        await db.refresh(db_rider)
+        session.add(db_rider)
+        await session.commit()
+        await session.refresh(db_rider)
 
         # Handle referral code if provided
         if referral_code:
-            # Fetch the referrer by the referral code
-            referrer = await db.execute(select(Rider).filter(Rider.referral_code == referral_code))
+            referrer = await session.execute(select(Rider).filter(Rider.referral_code == referral_code))
             referrer_rider = referrer.scalars().first()
 
             if referrer_rider:
-                # Create a referral record
                 referral = Referral(
                     referrer_id=referrer_rider.id,
                     referred_rider_id=db_rider.id
                 )
-                db.add(referral)
-                await db.commit()
+                session.add(referral)
+                await session.commit()
 
-    return {"message": "Rider registration successful", "account_number": account_number}
+    return {
+        "message": "Rider registration successful",
+        "account_number": account_number
+    }
 
 
 # Driver Signup Endpoint
@@ -120,41 +147,49 @@ async def signup_driver(
     driver_photo: UploadFile = File(...),
     db: AsyncSession = Depends(get_async_db)
 ):
-    # Check if the license number already exists for another driver
-    query = select(Driver).filter(Driver.license_number == license_number)
-    existing_license = (await db.execute(query)).scalars().first()
-    if existing_license:
-        raise HTTPException(status_code=400, detail="License number already exists.")
-    
-    # Check if the user already exists by phone number
-    query = select(User).filter(User.phone_number == phone_number)
-    existing_user = (await db.execute(query)).scalars().first()
+    async with db as session:
+        # Check if license number already exists for another driver
+        existing_license = await session.execute(
+            select(Driver).filter(Driver.license_number == license_number)
+        )
+        existing_license = existing_license.scalars().first()
+        if existing_license:
+            raise HTTPException(status_code=400, detail="License number already exists.")
 
-    if existing_user:
-        # Check if the user is already registered as a Driver
-        query = select(Driver).filter(Driver.user_id == existing_user.id)
-        existing_driver = (await db.execute(query)).scalars().first()
-        if existing_driver:
-            raise HTTPException(status_code=400, detail="User already registered as a Driver.")
+        # Check if email already exists
+        existing_email = await session.execute(
+            select(User).filter(User.email == email)
+        )
+        existing_email = existing_email.scalars().first()
+        if existing_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A user with this email is already registered."
+            )
 
-        # Check if the email matches with the existing user
-        if existing_user.email != email:
-            raise HTTPException(status_code=400, detail="Email does not match the existing user.")
-    
-    else:
-        # Check if the email is already in use
-        query = select(User).filter(User.email == email)
-        existing_email_user = (await db.execute(query)).scalars().first()
-        if existing_email_user:
-            raise HTTPException(status_code=400, detail="Email already exists.")
+        # Check if phone number already exists
+        existing_phone = await session.execute(
+            select(User).filter(User.phone_number == phone_number)
+        )
+        existing_phone = existing_phone.scalars().first()
+        if existing_phone:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A user with this phone number is already registered."
+            )
 
-        # Check if the username is already in use
-        query = select(User).filter(User.user_name == user_name)
-        existing_username = (await db.execute(query)).scalars().first()
+        # Check if username already exists
+        existing_username = await session.execute(
+            select(User).filter(User.user_name == user_name)
+        )
+        existing_username = existing_username.scalars().first()
         if existing_username:
-            raise HTTPException(status_code=400, detail="Username already exists.")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A user with this username is already registered."
+            )
 
-        # Hash the password and create the new User
+        # If no user exists with the provided phone number, email, or username, proceed
         hashed_password = get_password_hash(password)
         db_user = User(
             full_name=full_name,
@@ -165,34 +200,29 @@ async def signup_driver(
             address=address,
             user_type="DRIVER"
         )
-        db.add(db_user)
-        await db.commit()
-        await db.refresh(db_user)
+        session.add(db_user)
+        await session.commit()
+        await session.refresh(db_user)
 
         # Create wallet for the user
         account_number = generate_account_number()
         db_wallet = Wallet(user_id=db_user.id, balance=0.0, account_number=account_number)
-        db.add(db_wallet)
-        await db.commit()
-        await db.refresh(db_wallet)
+        session.add(db_wallet)
+        await session.commit()
+        await session.refresh(db_wallet)
 
     # Save driver-specific data
     file_content = await driver_photo.read()
     db_driver = Driver(
-        user_id=existing_user.id if existing_user else db_user.id,
+        user_id=db_user.id,
         license_number=license_number,
         license_expiry=license_expiry,
         years_of_experience=years_of_experience,
         driver_photo=file_content
     )
-    db.add(db_driver)
-    await db.commit()
-    await db.refresh(db_driver)
-
-    # Update user type to DRIVER if the user already exists
-    if existing_user:
-        existing_user.user_type = "DRIVER"
-        await db.commit()
+    session.add(db_driver)
+    await session.commit()
+    await session.refresh(db_driver)
 
     return {"message": "Driver registration successful", "account_number": account_number}
 

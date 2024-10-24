@@ -11,7 +11,6 @@ import uuid
 
 Base = declarative_base()
 
-# User Model
 class User(Base):
     __tablename__ = "users"
 
@@ -32,7 +31,9 @@ class User(Base):
     rider = relationship("Rider", back_populates="user", uselist=False)
     driver = relationship("Driver", back_populates="user", uselist=False)
     wallet = relationship("Wallet", uselist=False, back_populates="user")
-
+    # Chat relationships
+    sent_messages = relationship("ChatMessage", foreign_keys="[ChatMessage.sender_id]", back_populates="sender")
+    received_messages = relationship("ChatMessage", foreign_keys="[ChatMessage.receiver_id]", back_populates="receiver")
 
 class Referral(Base):
     __tablename__ = 'referrals'
@@ -117,6 +118,8 @@ class Ride(Base):
     rider = relationship("Rider", back_populates="rides")
     driver = relationship("Driver", back_populates="rides")
     rating = relationship("Rating", uselist=False, back_populates="ride")
+    messages = relationship("ChatMessage", back_populates="ride")
+
 
 # OTP Verification Model
 class OTPVerification(Base):
@@ -225,3 +228,16 @@ class Transaction(Base):
     wallet = relationship("Wallet", back_populates="transactions")
 
 
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ride_id = Column(Integer, ForeignKey('rides.id'))  # Optional: Associate with a ride
+    sender_id = Column(Integer, ForeignKey('users.id'))  # Either rider or driver
+    receiver_id = Column(Integer, ForeignKey('users.id'))  # Either rider or driver
+    message = Column(String)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+    ride = relationship("Ride", back_populates="messages")
+    sender = relationship("User", foreign_keys=[sender_id])
+    receiver = relationship("User", foreign_keys=[receiver_id])
