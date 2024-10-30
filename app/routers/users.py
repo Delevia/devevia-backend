@@ -9,7 +9,7 @@ from ..models import User, Rider, Driver, KYC, Admin, Wallet, Referral
 from ..schemas import KycCreate, AdminCreate, get_password_hash
 from ..utils.schemas_utils import UserProfileResponse
 from ..utils.utils_dependencies_files import get_current_user, generate_hashed_referral_code
-from ..utils.wallet_utilitity_functions import generate_account_number
+from ..utils.wallet_utilitity_functions import generate_global_unique_account_number
 import logging
 import os
 
@@ -40,7 +40,7 @@ async def signup_rider(
     email: str = Form(...),
     password: str = Form(...),
     address: Optional[str] = Form(None),
-    rider_photo: UploadFile = File(...),
+    # rider_photo: UploadFile = File(...),
     referral_code: Optional[str] = Form(None),  # Add referral code field
     db: AsyncSession = Depends(get_async_db)
 ):
@@ -97,17 +97,17 @@ async def signup_rider(
         await session.refresh(db_user)
 
         # Create wallet for the user
-        account_number = generate_account_number()
+        account_number = generate_global_unique_account_number()
         db_wallet = Wallet(user_id=db_user.id, balance=0.0, account_number=account_number)
         session.add(db_wallet)
         await session.commit()
         await session.refresh(db_wallet)
 
         # Save rider-specific data
-        file_content = await rider_photo.read()
+        # file_content = await rider_photo.read()
         db_rider = Rider(
             user_id=db_user.id,
-            rider_photo=file_content,
+            # rider_photo=file_content,
         )
         session.add(db_rider)
         await session.commit()
@@ -144,7 +144,7 @@ async def signup_driver(
     license_number: str = Form(...),
     license_expiry: date = Form(...),
     years_of_experience: int = Form(...),
-    driver_photo: UploadFile = File(...),
+    # driver_photo: UploadFile = File(...),
     db: AsyncSession = Depends(get_async_db)
 ):
     async with db as session:
@@ -205,20 +205,20 @@ async def signup_driver(
         await session.refresh(db_user)
 
         # Create wallet for the user
-        account_number = generate_account_number()
+        account_number = generate_global_unique_account_number()
         db_wallet = Wallet(user_id=db_user.id, balance=0.0, account_number=account_number)
         session.add(db_wallet)
         await session.commit()
         await session.refresh(db_wallet)
 
     # Save driver-specific data
-    file_content = await driver_photo.read()
+    # file_content = await driver_photo.read()
     db_driver = Driver(
         user_id=db_user.id,
         license_number=license_number,
         license_expiry=license_expiry,
         years_of_experience=years_of_experience,
-        driver_photo=file_content
+        # driver_photo=file_content
     )
     session.add(db_driver)
     await session.commit()
@@ -336,4 +336,40 @@ async def get_referral_code(rider_id: int, db: AsyncSession = Depends(get_async_
 
     return {
         "referral_code": rider.referral_code
+    }
+
+
+# Driver Referral
+@router.get("/driver/referral-code/{driver_id}", status_code=status.HTTP_200_OK)
+async def get_driver_referral_code(driver_id: int, db: AsyncSession = Depends(get_async_db)):
+    # Ensure the driver exists in the database
+    result = await db.execute(select(Driver).filter(Driver.id == driver_id))
+    driver = result.scalars().first()
+
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+
+    # Check if the driver already has a referral code
+    if driver.referral_code:
+        return {
+            "referral_code": driver.referral_code
+        }
+
+    # Generate a new referral code
+    referral_code = generate_hashed_referral_code()
+
+    # Set the new referral code
+    driver.referral_code = referral_code
+
+    # Commit the changes to the database
+    try:
+        db.add(driver)  # Mark the driver instance for update
+        await db.commit()  # Commit the transaction
+        await db.refresh(driver)  # Refresh the driver instance
+    except Exception as e:
+        await db.rollback()  # Rollback in case of error
+        raise HTTPException(status_code=500, detail=f"An error occurred while saving the referral code: {e}")
+
+    return {
+        "referral_code": driver.referral_code
     }

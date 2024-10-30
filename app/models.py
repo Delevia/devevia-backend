@@ -35,19 +35,22 @@ class User(Base):
     sent_messages = relationship("ChatMessage", foreign_keys="[ChatMessage.sender_id]", back_populates="sender")
     received_messages = relationship("ChatMessage", foreign_keys="[ChatMessage.receiver_id]", back_populates="receiver")
 
+
 class Referral(Base):
     __tablename__ = 'referrals'
     
     id = Column(Integer, primary_key=True, index=True)
-    referrer_id = Column(Integer, ForeignKey('riders.id'), nullable=False)  # Referring rider
+    referrer_rider_id = Column(Integer, ForeignKey('riders.id'), nullable=True)  # Referring rider
+    referrer_driver_id = Column(Integer, ForeignKey('drivers.id'), nullable=True)  # Referring driver
     referred_rider_id = Column(Integer, ForeignKey('riders.id'), nullable=False)  # Referred rider
     created_at = Column(DateTime(timezone=True), server_default=func.now())  # Timestamp for when referral occurred
 
-    referrer = relationship("Rider", foreign_keys=[referrer_id], back_populates="referrals_made")
+    # Relationships
+    referrer_rider = relationship("Rider", foreign_keys=[referrer_rider_id], back_populates="referrals_made_by_rider")
+    referrer_driver = relationship("Driver", foreign_keys=[referrer_driver_id], back_populates="referrals_made_by_driver")
     referred_rider = relationship("Rider", foreign_keys=[referred_rider_id], back_populates="referred_by")
 
 
-# Rider Model
 class Rider(Base):
     __tablename__ = "riders"
 
@@ -56,15 +59,17 @@ class Rider(Base):
     rider_photo = Column(LargeBinary, nullable=True)
     referral_code = Column(String(10), unique=True)  # UUID string for referral code
     
+    # Relationships
     user = relationship("User", back_populates="rider")
     rides = relationship("Ride", back_populates="rider")
     ratings = relationship("Rating", back_populates="rider")
     payment_methods = relationship("PaymentMethod", back_populates="rider")
-    referrals_made = relationship('Referral', foreign_keys=[Referral.referrer_id], back_populates="referrer")
-    referred_by = relationship('Referral', foreign_keys=[Referral.referred_rider_id], back_populates="referred_rider")
+    
+    # Referral relationships
+    referrals_made_by_rider = relationship("Referral", foreign_keys=[Referral.referrer_rider_id], back_populates="referrer_rider")
+    referred_by = relationship("Referral", foreign_keys=[Referral.referred_rider_id], back_populates="referred_rider")
 
-   
-# Driver Model
+
 class Driver(Base):
     __tablename__ = "drivers"
 
@@ -74,12 +79,14 @@ class Driver(Base):
     license_number = Column(String, unique=True, index=True)
     license_expiry = Column(Date, nullable=False)
     years_of_experience = Column(Integer, nullable=False)
-    
+    referral_code = Column(String, unique=True, nullable=True)  # New field for referral code
+
+    # Relationships
     vehicle = relationship("Vehicle", back_populates="driver", uselist=False)
     user = relationship("User", back_populates="driver")
     rides = relationship("Ride", back_populates="driver")
     ratings = relationship("Rating", back_populates="driver")
-
+    referrals_made_by_driver = relationship("Referral", foreign_keys=[Referral.referrer_driver_id], back_populates="referrer_driver")
 # Vehicle Model
 class Vehicle(Base):
     __tablename__ = "vehicles"
@@ -126,7 +133,8 @@ class OTPVerification(Base):
     __tablename__ = "otp_verification"
 
     id = Column(Integer, primary_key=True, index=True)
-    phone_number = Column(String, unique=True, nullable=False)
+    phone_number = Column(String, unique=True, nullable=True)
+    email = Column(String, index=True)  # Ensure this field is defined
     otp_code = Column(String, nullable=False)
     is_verified = Column(Boolean, default=False)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text('now()'))
@@ -226,6 +234,8 @@ class Transaction(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     wallet = relationship("Wallet", back_populates="transactions")
+    company_wallet = relationship("CompanyWallet", back_populates="transactions")
+    company_wallet_id = Column(Integer, ForeignKey("company_wallet.id"), nullable=True)
 
 
 class ChatMessage(Base):
@@ -241,3 +251,17 @@ class ChatMessage(Base):
     ride = relationship("Ride", back_populates="messages")
     sender = relationship("User", foreign_keys=[sender_id])
     receiver = relationship("User", foreign_keys=[receiver_id])
+
+
+# Company Wallet
+class CompanyWallet(Base):
+    __tablename__ = 'company_wallet'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    balance = Column(Float, default=0.0)
+    account_number = Column(String, unique=True, nullable=False)  # New column for account number
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, onupdate=datetime.utcnow)
+
+    # Relationship with transactions
+    transactions = relationship("Transaction", back_populates="company_wallet")

@@ -2,11 +2,11 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from ..database import get_async_db  # Ensure to update this to get the async session
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.models import Wallet, Transaction
+from app.models import Wallet, Transaction, CompanyWallet
 from ..utils.wallet_schema import  WalletResponse, TransactionCreate, TransactionResponse, TransactionHistoryResponse
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from ..utils.wallet_utilitity_functions import generate_global_unique_account_number
 router = APIRouter()
 
 
@@ -122,3 +122,68 @@ async def get_wallet_history(user_id: int, db: AsyncSession = Depends(get_async_
         raise HTTPException(status_code=404, detail="No transaction history found for this wallet")
 
     return transactions
+
+
+# Create Company Wallet endpoint
+@router.post("/company-wallet/create", status_code=status.HTTP_201_CREATED)
+async def create_company_wallet(db: AsyncSession = Depends(get_async_db)):
+    try:
+        # Check if a company wallet already exists
+        existing_wallet_query = select(CompanyWallet)
+        existing_wallet = (await db.execute(existing_wallet_query)).scalars().first()
+        
+        if existing_wallet:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Company wallet already exists"
+            )
+
+        # Generate a unique account number for the company wallet
+        account_number = await generate_global_unique_account_number(db)
+
+        # Create the new company wallet with the generated account number
+        new_wallet = CompanyWallet(balance=0.0, account_number=account_number)
+        db.add(new_wallet)
+        await db.commit()
+        await db.refresh(new_wallet)
+
+        return {
+            "message": "Company wallet created successfully",
+            "wallet_id": new_wallet.id,
+            "account_number": new_wallet.account_number,
+            "balance": new_wallet.balance
+        }
+    
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred: {str(e)}"
+        )    
+    
+# Endpoint to check for company account number
+@router.get("/company-wallet/account-number", status_code=status.HTTP_200_OK)
+async def get_company_account_number(db: AsyncSession = Depends(get_async_db)):
+    try:
+        # Query to get the company wallet
+        wallet_query = select(CompanyWallet)
+        wallet = (await db.execute(wallet_query)).scalars().first()
+        
+        # Check if the company wallet exists
+        if not wallet:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Company wallet not found"
+            )
+
+        # Return the account number if wallet exists
+        return {
+            "account_number": wallet.account_number
+        }
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred: {e}"
+        )
+    

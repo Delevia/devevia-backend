@@ -337,11 +337,11 @@ async def complete_ride(
         referral = (await db.execute(referral_query)).scalars().first()
 
         if referral:
-            # Calculate 3% of the fare
+            # Calculate 3% of the fare for the rider's referrer
             referral_bonus = ride.fare * 0.03
 
             # Fetch the referrer's wallet
-            wallet_query = select(Wallet).filter(Wallet.user_id == referral.referrer_id)
+            wallet_query = select(Wallet).filter(Wallet.user_id == referral.referrer_driver_id)
             referrer_wallet = (await db.execute(wallet_query)).scalars().first()
 
             if referrer_wallet:
@@ -353,13 +353,43 @@ async def complete_ride(
                 transaction = Transaction(
                     wallet_id=referrer_wallet.id,
                     amount=referral_bonus,
-                    transaction_type=WalletTransactionEnum.REFERRAL_BONUS,  # Assuming you have this enum type
+                    transaction_type=WalletTransactionEnum.REFERRAL_BONUS,
                     created_at=datetime.utcnow()
                 )
                 
                 db.add(transaction)  # Add the transaction to the session
 
                 # Commit the changes
+                await db.commit()
+
+        # Check if the ride was booked through a driver's referral code
+        driver_referral_query = select(Referral).filter(Referral.referrer_driver_id == driver_id, Referral.referred_rider_id == ride.rider_id)
+        driver_referral = (await db.execute(driver_referral_query)).scalars().first()
+
+        if driver_referral:
+            # Calculate a similar bonus for the driver
+            driver_referral_bonus = ride.fare * 0.03  # Example: 2% bonus for the driver
+
+            # Fetch the driver's wallet
+            driver_wallet_query = select(Wallet).filter(Wallet.user_id == driver_id)
+            driver_wallet = (await db.execute(driver_wallet_query)).scalars().first()
+
+            if driver_wallet:
+                # Add the bonus to the driver's wallet balance
+                driver_wallet.balance += driver_referral_bonus
+                db.add(driver_wallet)  # Update the driver's wallet
+
+                # Create a transaction history for the driver's referral bonus
+                driver_transaction = Transaction(
+                    wallet_id=driver_wallet.id,
+                    amount=driver_referral_bonus,
+                    transaction_type=WalletTransactionEnum.REFERRAL_BONUS,
+                    created_at=datetime.utcnow()
+                )
+
+                db.add(driver_transaction)  # Add the transaction to the session
+
+                # Commit the changes for the driver's bonus
                 await db.commit()
 
         return {

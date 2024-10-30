@@ -2,6 +2,8 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, EmailStr
+
 
 
 class OtpPhoneNumberRequest(BaseModel):
@@ -25,5 +27,9 @@ class UserProfileResponse(BaseModel):
     class Config:
             # orm_mode = True
             exclude = {"created_at"}  # Ensure 'created_at' is excluded
+
+
+class OtpSMSRequest(BaseModel):
+     phone_number: str = Field(..., pattern=r'^\d{10,15}$', description="Phone number in international format without '+' sign, e.g., 23490126727")
 
 
