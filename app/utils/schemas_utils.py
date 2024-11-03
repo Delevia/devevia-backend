@@ -30,6 +30,8 @@ class UserProfileResponse(BaseModel):
 
 
 class OtpSMSRequest(BaseModel):
-     phone_number: str = Field(..., pattern=r'^\d{10,15}$', description="Phone number in international format without '+' sign, e.g., 23490126727")
-
-
+    phone_number: str = Field(
+        ...,
+        pattern=r'^\+?\d{10,15}$',
+        description="Phone number in international format, e.g., +23490126727 or 23490126727"
+    )

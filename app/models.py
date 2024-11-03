@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, Enum
 from sqlalchemy.orm import relationship
 from .database import Base
 from sqlalchemy.sql.expression import text
-from .enums import UserType, UserStatusEnum, PaymentMethodEnum, RideStatusEnum, RideTypeEnum, WalletTransactionEnum
+from .enums import UserType, UserStatusEnum, PaymentMethodEnum, RideStatusEnum, RideTypeEnum, WalletTransactionEnum, OTPTypeEnum
 from datetime import datetime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func  # Import func to use for timestamp
@@ -21,7 +21,7 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text('now()'))
-    address = Column(String(100), nullable=False)
+    address = Column(String(100), nullable=True)
     user_type = Column(SQLAEnum(UserType), nullable=False)
     user_status = Column(SQLAEnum(UserStatusEnum), default=UserStatusEnum.AWAITING, nullable=False)
 
@@ -87,6 +87,8 @@ class Driver(Base):
     rides = relationship("Ride", back_populates="driver")
     ratings = relationship("Rating", back_populates="driver")
     referrals_made_by_driver = relationship("Referral", foreign_keys=[Referral.referrer_driver_id], back_populates="referrer_driver")
+
+
 # Vehicle Model
 class Vehicle(Base):
     __tablename__ = "vehicles"
@@ -130,15 +132,20 @@ class Ride(Base):
 
 # OTP Verification Model
 class OTPVerification(Base):
-    __tablename__ = "otp_verification"
+    __tablename__ = "otp_verifications"
 
     id = Column(Integer, primary_key=True, index=True)
-    phone_number = Column(String, unique=True, nullable=True)
-    email = Column(String, index=True)  # Ensure this field is defined
+    full_name = Column(String, nullable=False)
+    user_name = Column(String, nullable=False)
+    phone_number = Column(String, unique=True, nullable=False)
+    email = Column(String, unique=True, nullable=False)
     otp_code = Column(String, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
     is_verified = Column(Boolean, default=False)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text('now()'))
-    expires_at = Column(TIMESTAMP(timezone=True), nullable=False)
+    hashed_password = Column(String, nullable=False)
+    referral_code = Column(String, nullable=True)
+    otp_type = Column(SQLAEnum(OTPTypeEnum), nullable=True)  # New field for OTP type
+
 
 # Admin Model
 class Admin(Base):
@@ -264,4 +271,4 @@ class CompanyWallet(Base):
     updated_at = Column(DateTime, onupdate=datetime.utcnow)
 
     # Relationship with transactions
-    transactions = relationship("Transaction", back_populates="company_wallet")
+    transactions = relationship("Transaction", back_populates="company_wallet")    

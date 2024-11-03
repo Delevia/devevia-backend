@@ -3,7 +3,7 @@ from typing import Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import Session
-from datetime import date
+from datetime import datetime, timedelta, date
 from ..database import get_async_db
 from ..models import User, Rider, Driver, KYC, Admin, Wallet, Referral
 from ..schemas import KycCreate, AdminCreate, get_password_hash
@@ -12,6 +12,15 @@ from ..utils.utils_dependencies_files import get_current_user, generate_hashed_r
 from ..utils.wallet_utilitity_functions import generate_global_unique_account_number
 import logging
 import os
+from ..utils.otp import generate_otp, OTPVerification, generate_otp_expiration
+import httpx
+import random
+from sqlalchemy.future import select
+from fastapi import HTTPException
+from ..enums import UserType
+from pydantic import BaseModel, Field
+from app.utils.security import hash_password
+
 
 router = APIRouter()
 
@@ -30,6 +39,145 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
+
+
+# Define a Pydantic model for the request body
+class PreRegisterRequest(BaseModel):
+    full_name: str = Field(..., title="Full Name", description="The full name of the user")
+    user_name: str = Field(..., title="Username", description="The username of the user")
+    phone_number: str = Field(..., title="Phone Number", description="The phone number of the user")
+    email: str = Field(..., title="Email", description="The email address of the user")
+    password: str = Field(..., title="Password", description="The user's password")
+    referral_code: str = Field(None, title="Referral Code", description="Optional referral code for the user")
+
+@router.post("/pre-register/rider/", status_code=status.HTTP_200_OK)
+async def pre_register_rider(
+    request: PreRegisterRequest,
+    db: AsyncSession = Depends(get_async_db)
+):
+    # Extract data from the request
+    full_name = request.full_name
+    user_name = request.user_name
+    phone_number = request.phone_number
+    email = request.email
+    password = request.password
+    referral_code = request.referral_code
+
+    # Generate OTP and expiration time
+    otp_code = generate_otp()
+    expiration_time = generate_otp_expiration()
+
+    # Store the user data along with the OTP in the database
+    async with db as session:
+        otp_entry = OTPVerification(
+            full_name=full_name,
+            user_name=user_name,
+            phone_number=phone_number,
+            email=email,
+            otp_code=otp_code,
+            expires_at=expiration_time,
+            is_verified=False,
+            hashed_password=hash_password(password),  # Hash the password for storage
+            referral_code=referral_code
+        )
+        session.add(otp_entry)
+        await session.commit()
+
+
+    # Send OTP via email
+    # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
+    #     email_response = await client.post(
+    #         "/auth/send-otp-email", params={"to_email": email, "otp_code": otp_code}  # Send as query params
+    #     )
+    #     if email_response.status_code != 200:
+    #         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP email.")
+
+    # # Send OTP via SMS
+    # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
+    #     sms_response = await client.post(
+    #         "/auth/send-otp/v1/messaging/send_sms", params={"phone_number": phone_number, "otp_code": otp_code}  
+    #     )
+    #     if sms_response.status_code != 200:
+    #         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP SMS.")
+
+    return {"message": "Pre-registration successful. OTP sent via email and SMS."}
+
+
+@router.post("/rider-complete-registration/", status_code=status.HTTP_200_OK)
+async def complete_registration(
+    phone_number: str = Form(...),
+    otp_code: str = Form(...),
+    referral_code: Optional[str] = Form(None),  # Optional referral code
+    db: AsyncSession = Depends(get_async_db)
+):
+    async with db as session:
+        # Validate OTP
+        otp_query = await session.execute(
+            select(OTPVerification).filter(
+                OTPVerification.phone_number == phone_number,
+                OTPVerification.otp_code == otp_code,
+                OTPVerification.expires_at > datetime.utcnow(),
+                OTPVerification.is_verified == False
+            )
+        )
+        otp_entry = otp_query.scalar()
+
+        if not otp_entry:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OTP.")
+
+        # Mark OTP as verified
+        otp_entry.is_verified = True
+        await session.commit()
+
+        # Generate a unique account number
+        account_number = f"ACC{random.randint(10000000, 99999999)}"
+
+        # Create User
+        user = User(
+            full_name=otp_entry.full_name,
+            user_name=otp_entry.user_name,
+            phone_number=otp_entry.phone_number,
+            email=otp_entry.email,
+            hashed_password=otp_entry.hashed_password,
+            user_type=UserType.RIDER  # Assuming UserType Enum includes RIDER
+        )
+        session.add(user)
+        await session.flush()  # Flush to get the user.id before creating the Rider
+
+        # Create Rider associated with the User
+        rider = Rider(
+            user_id=user.id  # Associate Rider with the newly created User
+        )
+        session.add(rider)
+        await session.flush()  # Flush to get the rider.id before creating the wallet
+
+        # Create Wallet associated with the User
+        wallet = Wallet(
+            user_id=user.id,  # Use the user.id as a foreign key in the Wallet
+            balance=0.0,
+            account_number=account_number
+        )
+        session.add(wallet)
+
+        # Handle referral code if provided
+        if referral_code:
+            referrer = await session.execute(select(Rider).filter(Rider.referral_code == referral_code))
+            referrer_rider = referrer.scalars().first()
+
+            if referrer_rider:
+                # Create a referral relationship
+                referral = Referral(
+                    referrer_id=referrer_rider.id,
+                    referred_rider_id=rider.id  # Use the new rider's id
+                )
+                session.add(referral)
+
+        await session.commit()  # Commit the User, Rider, and Wallet entries
+
+        return {"message": "Registration completed successfully", "account_number": account_number}
+    
 
 # Rider Signup Endpoint
 @router.post("/signup/rider/", status_code=status.HTTP_201_CREATED)
@@ -225,6 +373,61 @@ async def signup_driver(
     await session.refresh(db_driver)
 
     return {"message": "Driver registration successful", "account_number": account_number}
+
+
+# OTP Verification
+@router.post("/verify-otp/")
+async def verify_otp(
+    phone_number: str,
+    otp_code: str,
+    db: AsyncSession = Depends(get_async_db)
+):
+    async with db as session:
+        otp_entry = await session.execute(
+            select(OTPVerification).filter(
+                OTPVerification.phone_number == phone_number,
+                OTPVerification.otp_code == otp_code,
+                OTPVerification.expires_at > datetime.utcnow(),
+                OTPVerification.is_verified == False
+            )
+        )
+        otp_entry = otp_entry.scalars().first()
+
+        if not otp_entry:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OTP.")
+
+        # Mark OTP as verified
+        otp_entry.is_verified = True
+        await session.commit()
+
+        # Create a new User using the details in OTPVerification
+        db_user = User(
+            full_name=otp_entry.full_name,
+            user_name=otp_entry.user_name,
+            phone_number=otp_entry.phone_number,
+            email=otp_entry.email,
+            hashed_password=otp_entry.hashed_password,
+            user_type="RIDER"
+        )
+        session.add(db_user)
+        await session.commit()
+        await session.refresh(db_user)  # Refresh to get the new user ID
+
+        # Create a wallet for the new user
+        account_number = generate_global_unique_account_number()  # Function to generate a unique account number
+        db_wallet = Wallet(
+            user_id=db_user.id,
+            balance=0.0,  # Initial balance
+            account_number=account_number
+        )
+        session.add(db_wallet)
+        await session.commit()
+
+        return {
+            "message": "OTP verified, user registered successfully, and wallet created.",
+            "account_number": account_number
+        }
+
 
 
 # Create a KYC

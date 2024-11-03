@@ -13,6 +13,7 @@ from sqlalchemy.future import select
 from app.utils.connection_manager import manager
 import logging
 from typing import Dict
+from app.scheduler import start_scheduler
 
 
 
@@ -117,6 +118,11 @@ app.include_router(users.router, prefix="/users", tags=["Users"])
 app.include_router(rides.router, prefix="/rides", tags=["Rides"])
 app.include_router(wallet.router, prefix="/wallet", tags=["Wallet"])
 app.include_router(chatMessage.router, prefix="/chatMessage", tags=["chatMessage"])
+
+
+@app.on_event("startup")
+async def startup_event():
+    start_scheduler()
 
 
 

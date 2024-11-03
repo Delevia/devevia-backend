@@ -42,3 +42,9 @@ class WalletTransactionEnum(str, Enum):
     DEBIT = 'DEBIT' 
     REFERRAL_BONUS = 'REFERRALBONUS'
 
+
+class OTPTypeEnum(str, Enum):
+    EMAIL = "email"
+    SMS = "sms"
+
+

@@ -37,24 +37,9 @@ load_dotenv()
 SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
 SENDGRID_EMAIL_SENDER = "no-reply@delevia.com"  # Use your verified SendGrid sender email
 
-
-
-
-SENDCHAMP_EMAIL_SENDER_EMAIL = "omogiepaul@gmail.com"
-SENDCHAMP_EMAIL_SENDER_NAME = "Delevia"
-# Initialize Sendchamp client
-PUBLIC_KEY = "sendchamp_live_$2a$10$tcyGTxhkIUBuJ4JwdiAM1.axLK83m8G38xqS6FDKK/UBVP8T8BKH6"
-sendchamp = Sendchamp(public_key=PUBLIC_KEY)
-SENDCHAMP_API_URL = "https://api.sendchamp.com/api/v1/email/send"
-SENDCHAMP_PUBLIC_KEY = "sendchamp_live_$2a$10$tcyGTxhkIUBuJ4JwdiAM1.axLK83m8G38xqS6FDKK/UBVP8T8BKH6"
-
-
-
-
-# Get environment variables
-SMART_SMS_API_URL = os.getenv("SMART_SMS_API_URL")
-API_KEY = os.getenv("API_KEY")
-SENDER_ID = os.getenv("SENDER_ID")
+# Configue Sendchamp
+SENDCHAMP_API_URL = os.getenv("SENDCHAMP_API_URL")
+SENDCHAMP_PUBLIC_KEY = os.getenv("SENDCHAMP_PUBLIC_KEY")
 
 router = APIRouter()
 
@@ -166,65 +151,6 @@ async def refresh_token(request: RefreshTokenRequest, db: AsyncSession = Depends
         return {"access_token": access_token, "token_type": "bearer"}
 
 
-@router.post("/send-otp/v1/messaging/send_sms")
-async def send_otp_sms(request: OtpSMSRequest, db: AsyncSession = Depends(get_async_db)):
-    phone_number = request.phone_number
-
-    # Generate OTP and expiration time
-    otp_code = generate_otp()
-    expiration_time = generate_otp_expiration()
-
-    # Check and update OTP entry in database
-    async with db as session:
-        existing_otp = await session.execute(
-            select(OTPVerification).filter(OTPVerification.phone_number == phone_number)
-        )
-        existing_otp = existing_otp.scalar()
-
-        if existing_otp:
-            existing_otp.otp_code = otp_code
-            existing_otp.expires_at = expiration_time
-            existing_otp.is_verified = False
-            await session.commit()
-            await session.refresh(existing_otp)
-        else:
-            otp_entry = OTPVerification(
-                phone_number=phone_number,
-                otp_code=otp_code,
-                expires_at=expiration_time
-            )
-            session.add(otp_entry)
-            await session.commit()
-            await session.refresh(otp_entry)
-
-    # Prepare SMS data for Sendchamp
-    sms_data = {
-        "to": [f"{phone_number}"],  # Ensure phone number is in international format
-        "message": f"Your OTP code is {otp_code}. It expires in 5 minutes.",
-        "sender_name": "YourSenderID",  # Replace with your registered Sender ID or use "Sendchamp"
-        "route": "non_dnd"  # Use "dnd" or "international" if applicable
-    }
-
-    # Set headers for Sendchamp API
-    headers = {
-        "Authorization": f"Bearer {SENDCHAMP_PUBLIC_KEY}",
-        "accept": "application/json",
-        "content-type": "application/json"
-    }
-
-    # Make a POST request to send the SMS
-    response = requests.post("https://api.sendchamp.com/api/v1/sms/send", headers=headers, json=sms_data)
-
-    # Log the Sendchamp response and error for debugging
-    print("Sendchamp Response:", response.json())
-    print("Sendchamp Status Code:", response.status_code)
-
-    if response.status_code != 200:
-        # Handle failed SMS delivery
-        raise HTTPException(status_code=400, detail="Failed to send OTP SMS")
-
-    return {"message": "OTP sent successfully via SMS"}
-
 # Logout Endpoint
 @router.post("/logout", status_code=status.HTTP_200_OK)
 async def logout(request: LogoutRequest, db: AsyncSession = Depends(get_async_db)):
@@ -259,16 +185,11 @@ async def logout(request: LogoutRequest, db: AsyncSession = Depends(get_async_db
     return {"message": "Logout successful"}
 
 
-
 # SendGrid Email OTp
 @router.post("/send-otp-email")
-async def send_otp_email(to_email: str, db: AsyncSession = Depends(get_async_db )):
+async def send_otp_email(to_email: str, otp_code: str):
     if not SENDGRID_API_KEY:
         raise HTTPException(status_code=500, detail="SendGrid API key not configured")
-
-    # Generate OTP and expiration time
-    otp_code = generate_otp()
-    expiration_time = generate_otp_expiration()
 
     # Create the OTP email content
     subject = "Your OTP Code for Verification"
@@ -276,7 +197,7 @@ async def send_otp_email(to_email: str, db: AsyncSession = Depends(get_async_db 
     <html>
         <body>
             <h3>Your OTP Code</h3>
-            <p>Your OTP code is <strong>{otp_code}</strong>. It expires in 5 minutes.</p>
+            <p>Your Delevia OTP code is <strong>{otp_code}</strong>. It expires in 5 minutes.</p>
         </body>
     </html>
     """
@@ -290,11 +211,9 @@ async def send_otp_email(to_email: str, db: AsyncSession = Depends(get_async_db 
     )
 
     try:
-        # Initialize SendGrid client and send email
         sg = SendGridAPIClient(SENDGRID_API_KEY)
         response = sg.send(message)
 
-        # Check for successful status code
         if response.status_code not in (200, 202):
             raise HTTPException(status_code=400, detail="Failed to send OTP email")
 
@@ -302,15 +221,31 @@ async def send_otp_email(to_email: str, db: AsyncSession = Depends(get_async_db 
         print("SendGrid Error:", str(e))
         raise HTTPException(status_code=500, detail="An error occurred while sending the OTP email")
 
-    # Store the OTP in the database for verification
-    async with db as session:
-        otp_entry = OTPVerification(
-            email=to_email,
-            otp_code=otp_code,
-            expires_at=expiration_time,
-            is_verified=False
-        )
-        session.add(otp_entry)
-        await session.commit()
-
     return {"message": "OTP sent successfully via email"}
+
+
+
+# SEndchamp OTP Sms
+@router.post("/send-otp/v1/messaging/send_sms")
+async def send_otp_sms(phone_number: str, otp_code: str):
+    sms_data = {
+        "to": [phone_number],
+        "message": f"Your Delevia OTP code is {otp_code}. It expires in 5 minutes.",
+        "sender_name": "Sendchamp",
+        "route": "dnd"
+    }
+
+    headers = {
+        "Authorization": f"Bearer {SENDCHAMP_PUBLIC_KEY}",
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(SENDCHAMP_API_URL, json=sms_data, headers=headers)
+
+    if response.status_code != 200:
+        error_details = response.text
+        print("Error details:", error_details)
+        raise HTTPException(status_code=400, detail="Failed to send OTP SMS")
+
+    return {"message": "OTP sent successfully via SMS"}
