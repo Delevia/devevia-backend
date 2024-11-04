@@ -86,13 +86,13 @@ async def pre_register_rider(
         await session.commit()
 
 
-    # Send OTP via email
-    # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
-    #     email_response = await client.post(
-    #         "/auth/send-otp-email", params={"to_email": email, "otp_code": otp_code}  # Send as query params
-    #     )
-    #     if email_response.status_code != 200:
-    #         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP email.")
+    #Send OTP via email
+    async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
+        email_response = await client.post(
+            "/auth/send-otp-email", params={"to_email": email, "otp_code": otp_code}  # Send as query params
+        )
+        if email_response.status_code != 200:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP email.")
 
     # # Send OTP via SMS
     # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
@@ -166,13 +166,15 @@ async def complete_registration(
             referrer = await session.execute(select(Rider).filter(Rider.referral_code == referral_code))
             referrer_rider = referrer.scalars().first()
 
-            if referrer_rider:
-                # Create a referral relationship
-                referral = Referral(
-                    referrer_id=referrer_rider.id,
-                    referred_rider_id=rider.id  # Use the new rider's id
-                )
-                session.add(referral)
+            if not referrer_rider:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid referral code.")
+
+            # Create a referral relationship
+            referral = Referral(
+                referrer_id=referrer_rider.id,
+                referred_rider_id=rider.id  # Use the new rider's id
+            )
+            session.add(referral)
 
         await session.commit()  # Commit the User, Rider, and Wallet entries
 
