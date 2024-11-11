@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, Enum
 from sqlalchemy.orm import relationship
 from .database import Base
 from sqlalchemy.sql.expression import text
-from .enums import UserType, UserStatusEnum, PaymentMethodEnum, RideStatusEnum, RideTypeEnum, WalletTransactionEnum, OTPTypeEnum
+from .enums import UserType, UserStatusEnum, PaymentMethodEnum, RideStatusEnum, RideTypeEnum, WalletTransactionEnum, OTPTypeEnum, GenderEnum
 from datetime import datetime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func  # Import func to use for timestamp
@@ -24,6 +24,8 @@ class User(Base):
     address = Column(String(100), nullable=True)
     user_type = Column(SQLAEnum(UserType), nullable=False)
     user_status = Column(SQLAEnum(UserStatusEnum), default=UserStatusEnum.AWAITING, nullable=False)
+    gender = Column(SQLAEnum(GenderEnum), nullable=True)  # Gender added here
+
 
     # Relationships
     refresh_tokens = relationship("RefreshToken", back_populates="user")
@@ -58,6 +60,8 @@ class Rider(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     rider_photo = Column(LargeBinary, nullable=True)
     referral_code = Column(String(10), unique=True)  # UUID string for referral code
+    nin = Column(String(11), nullable=True)  
+    nin_photo = Column(LargeBinary, nullable=True)  # Binary data for NIN photo added here
     
     # Relationships
     user = relationship("User", back_populates="rider")

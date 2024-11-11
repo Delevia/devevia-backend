@@ -8,7 +8,7 @@ class ChatMessageResponse(BaseModel):
     timestamp: str  # or datetime if you handle it correctly
 
     class Config:
-        orm_mode = True  # Allows parsing from ORM objects (SQLAlchemy)
+        from_attributes = True  # Allows parsing from ORM objects (SQLAlchemy)
 
 
 # Request schema (used when sending a message)

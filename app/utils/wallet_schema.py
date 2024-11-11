@@ -10,7 +10,7 @@ class WalletResponse(BaseModel):
     account_number: str
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class TransactionCreate(BaseModel):
@@ -24,7 +24,7 @@ class TransactionResponse(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 # Response model for transaction details
@@ -35,4 +35,4 @@ class TransactionHistoryResponse(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True

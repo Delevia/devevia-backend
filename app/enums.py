@@ -48,3 +48,7 @@ class OTPTypeEnum(str, Enum):
     SMS = "sms"
 
 
+
+class GenderEnum(str, Enum):
+    Male = "Male"
+    Female = "Female"

@@ -15,7 +15,7 @@ class RideRequest(BaseModel):
     )
 
     class Config:
-        schema_extra = {
+        json_schema_extra  = {
             "example": {
                 "pickup_location": "123 Main St",
                 "dropoff_location": "456 Elm St",

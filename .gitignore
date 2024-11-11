@@ -6,6 +6,7 @@ env/
 ENV/
 env.bak/
 venv.bak/
+/assets/
 
 # Ignore Python cache files
 __pycache__/
