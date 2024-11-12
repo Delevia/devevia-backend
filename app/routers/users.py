@@ -21,7 +21,7 @@ import random
 from sqlalchemy.future import select
 from fastapi import HTTPException
 from ..enums import UserType, GenderEnum
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, ValidationError
 from app.utils.security import hash_password
 import aiofiles
 
@@ -56,6 +56,7 @@ class PreRegisterRequest(BaseModel):
     password: str = Field(..., title="Password", description="The user's password")
     referral_code: str = Field(None, title="Referral Code", description="Optional referral code for the user")
 
+# Rider Pre Registration
 @router.post("/pre-register/rider/", status_code=status.HTTP_200_OK)
 async def pre_register_rider(
     request: PreRegisterRequest,
@@ -122,7 +123,7 @@ async def pre_register_rider(
         }
     }
 
-
+# Complete Rider Registration
 @router.post("/rider-complete-registration/", status_code=status.HTTP_200_OK)
 async def complete_registration(
     phone_number: str = Form(...),
@@ -513,43 +514,7 @@ async def create_admin(admin: AdminCreate, db: AsyncSession = Depends(get_async_
     return {"message": "Admin record created successfully", "admin_id": new_admin.id}
 
 
-@router.get("/profile/rider/")
-async def get_rider_profile(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_async_db)):
-    """
-    Fetch the profile of the current rider, including both User and Rider-specific details.
-    """
-    # Query to fetch user data along with the related rider information
-    query = (
-        select(User, Rider)
-        .join(Rider, User.id == Rider.user_id)
-        .filter(User.id == current_user.id)
-    )
-    result = await db.execute(query)
-    user, rider = result.first() if result else (None, None)
-    
-    if not user or not rider:
-        logger.error("Rider not found for the current user")
-        raise HTTPException(status_code=404, detail="Rider profile not found")
-    
-    # Log fetched data
-    logger.debug(f"Fetched user and rider from DB: {user}, {rider}")
-    
-    # Build the response
-    # rider_profile_response = RiderProfileResponse(
-    #     id=user.id,
-    #     user_name=user.user_name,
-    #     email=user.email,
-    #     phone_number=user.phone_number,
-    #     full_name=user.full_name,
-    #     address=user.address,
-    #     user_type=user.user_type,
-    #     user_status=user.user_status,
-    #     rider_photo=rider.rider_photo,
-    #     referral_code=rider.referral_code
-    # )
-    # return rider_profile_response
-
-# Referal Code Endpoint
+# Rider Referal Code Endpoint
 @router.get("/rider/referral-code/{rider_id}", status_code=status.HTTP_200_OK)
 async def get_referral_code(rider_id: int, db: AsyncSession = Depends(get_async_db)):
     # Ensure the rider exists in the database
@@ -621,11 +586,25 @@ async def get_driver_referral_code(driver_id: int, db: AsyncSession = Depends(ge
     }
 
 
+
+# Update Rider Profile
+# Helper function to save the image to disk
+async def save_image(file: UploadFile, folder: str) -> str:
+    file_directory = f"./assets/riders/{folder}"
+    os.makedirs(file_directory, exist_ok=True)  # Create directory if it doesn’t exist
+    file_path = os.path.join(file_directory, file.filename)
+    
+    # Save the file asynchronously
+    async with aiofiles.open(file_path, 'wb') as out_file:
+        content = await file.read()  # Read file contents
+        await out_file.write(content)  # Write to disk
+    return file_path  # Return the file path for storage in the database
+
 @router.put("/riders/{rider_id}/profile", response_model=RiderProfileUpdate)
 async def update_rider_profile(
     rider_id: int,
     gender: Optional[str] = Form(None),
-    email: Optional[EmailStr] = Form(None),
+    email: Optional[str] = Form(None),
     address: Optional[str] = Form(None),
     phone_number: Optional[str] = Form(None),
     nin: Optional[str] = Form(None),
@@ -646,13 +625,13 @@ async def update_rider_profile(
 
     # Handle profile photo upload
     if profile_photo:
-        profile_photo_data = await profile_photo.read()
-        rider.rider_photo = base64.b64encode(profile_photo_data).decode('utf-8')
+        profile_photo_path = await save_image(profile_photo, "profile_photos")
+        rider.rider_photo = profile_photo_path  # Save the file path in the database
 
     # Handle NIN photo upload
     if nin_photo:
-        nin_photo_data = await nin_photo.read()
-        rider.nin_photo = base64.b64encode(nin_photo_data).decode('utf-8')
+        nin_photo_path = await save_image(nin_photo, "nin_photos")
+        rider.nin_photo = nin_photo_path  # Save the file path in the database
 
     # Retrieve associated user and update relevant fields
     user = await db.get(User, rider.user_id)
@@ -661,34 +640,18 @@ async def update_rider_profile(
             user.gender = gender
         if address:
             user.address = address
-        if email or phone_number:
-            existing_user_query = select(User).where(
-                or_(
-                    (User.email == email) if email else False,
-                    (User.phone_number == phone_number) if phone_number else False
-                ),
-                User.id != user.id
-            )
-            existing_user_result = await db.execute(existing_user_query)
-            existing_user = existing_user_result.scalar_one_or_none()
-
-            if existing_user:
-                if email and existing_user.email == email:
-                    raise HTTPException(status_code=400, detail="Email already exists")
-                if phone_number and existing_user.phone_number == phone_number:
-                    raise HTTPException(status_code=400, detail="Phone number already exists")
-
-            if email:
-                user.email = email
-            if phone_number:
-                user.phone_number = phone_number
+        # Update email without validation
+        if email:
+            user.email = email
+        if phone_number:
+            user.phone_number = phone_number
     else:
         raise HTTPException(status_code=404, detail="Associated user not found")
 
+    # Commit changes to the database
     await db.commit()
     await db.refresh(rider)
 
-    # Return updated profile
     return RiderProfileUpdate(
         rider_id=rider.id,
         gender=user.gender if user else None,
@@ -700,17 +663,7 @@ async def update_rider_profile(
         nin_photo=rider.nin_photo
     )
 
-async def save_file(file: UploadFile, folder: str) -> Tuple[str, bytes]:
-    file_directory = f"./assets/riders/{folder}"
-    os.makedirs(file_directory, exist_ok=True)
-    file_path = os.path.join(file_directory, file.filename)
-    async with aiofiles.open(file_path, 'wb') as out_file:
-        content = await file.read()
-        await out_file.write(content)
-
-    return file_path, content
-
-
+# Get Rider Profile
 @router.get("/riders/{rider_id}/profile", response_model=RiderProfile)
 async def get_rider_profile(
     rider_id: int,
@@ -730,21 +683,13 @@ async def get_rider_profile(
     if not user:
         raise HTTPException(status_code=404, detail="Associated user not found")
 
-    # Convert profile photo to Base64 if it exists
-    profile_photo_base64 = None
-    if rider.rider_photo:
-        image_data = rider.rider_photo  # This should be the binary image data
-        buffer = BytesIO(image_data)
-        profile_photo_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-    # Combine selected profile details from Rider and User
+    # Combine selected profile details from Rider and User, returning only the profile photo path
     profile_data = {
         "rider_id": rider.id,
         "gender": user.gender,
         "address": user.address,
         "nin": rider.nin,
-        "profile_photo": profile_photo_base64,  # Return Base64 encoded image
-        # User data
+        "profile_photo": rider.rider_photo,  # Return the file path instead of Base64
         "email": user.email,
         "phone_number": user.phone_number,
         "full_name": user.full_name,

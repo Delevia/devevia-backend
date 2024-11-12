@@ -42,7 +42,7 @@ class RiderProfileUpdate(BaseModel):
     gender: Optional[GenderEnum]
     address: Optional[str]
     nin: Optional[str]
-    email: Optional[EmailStr]
+    email: Optional[str]
     phone_number: Optional[str]
     profile_photo: Optional[str]  # file path
     nin_photo: Optional[str]  # file path
@@ -56,13 +56,14 @@ class RiderProfileUpdate(BaseModel):
     class Config:
         from_attributes = True
 
+
 class RiderProfile(BaseModel):
     rider_id: int
     gender: Optional[str] = None
     address: Optional[str] = None
     nin: Optional[str] = None
     profile_photo: Optional[str] = None
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
     phone_number: Optional[str] = None
     full_name: Optional[str] = None
 

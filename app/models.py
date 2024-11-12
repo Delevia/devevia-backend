@@ -58,10 +58,10 @@ class Rider(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    rider_photo = Column(LargeBinary, nullable=True)
+    rider_photo = Column(String, nullable=True)
     referral_code = Column(String(10), unique=True)  # UUID string for referral code
     nin = Column(String(11), nullable=True)  
-    nin_photo = Column(LargeBinary, nullable=True)  # Binary data for NIN photo added here
+    nin_photo = Column(String, nullable=True)  # Binary data for NIN photo added here
     
     # Relationships
     user = relationship("User", back_populates="rider")
