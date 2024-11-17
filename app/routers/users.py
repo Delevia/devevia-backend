@@ -1,30 +1,27 @@
 from fastapi import APIRouter, HTTPException, status, Depends, Form, UploadFile, File
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Optional, Union
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy.orm import Session
 from sqlalchemy import or_
-from datetime import datetime, timedelta, date
+from datetime import datetime, date
 from ..database import get_async_db
 from ..models import User, Rider, Driver, KYC, Admin, Wallet, Referral
 from ..schemas import KycCreate, AdminCreate, get_password_hash
-from ..utils.schemas_utils import RiderProfileUpdate, RiderProfile
+from ..utils.schemas_utils import RiderProfileUpdate, RiderProfile, PreRegisterRequest, DriverPreRegisterRequest
 from ..utils.utils_dependencies_files import get_current_user, generate_hashed_referral_code
 from ..utils.wallet_utilitity_functions import generate_global_unique_account_number
 import logging
 import os
 from ..utils.otp import generate_otp, OTPVerification, generate_otp_expiration
-import httpx
-from io import BytesIO
-import base64
+from uuid import uuid4
 import random
 from sqlalchemy.future import select
 from fastapi import HTTPException
-from ..enums import UserType, GenderEnum
+from ..enums import UserType
 from pydantic import BaseModel, Field, EmailStr, ValidationError
 from app.utils.security import hash_password
 import aiofiles
-
+from sqlalchemy.orm import joinedload
 
 router = APIRouter()
 
@@ -45,16 +42,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-
-
-# Define a Pydantic model for the request body
-class PreRegisterRequest(BaseModel):
-    full_name: str = Field(..., title="Full Name", description="The full name of the user")
-    user_name: str = Field(..., title="Username", description="The username of the user")
-    phone_number: str = Field(..., title="Phone Number", description="The phone number of the user")
-    email: str = Field(..., title="Email", description="The email address of the user")
-    password: str = Field(..., title="Password", description="The user's password")
-    referral_code: str = Field(None, title="Referral Code", description="Optional referral code for the user")
 
 # Rider Pre Registration
 @router.post("/pre-register/rider/", status_code=status.HTTP_200_OK)
@@ -123,6 +110,29 @@ async def pre_register_rider(
         }
     }
 
+
+# Helper function to save the image to disk
+async def save_image(file: UploadFile, folder: str) -> str:
+    # Ensure the folder path is available
+    file_directory = f"./assets/riders/{folder}"
+    os.makedirs(file_directory, exist_ok=True)  # Create directory if it doesn’t exist
+    
+    # Generate a unique filename to prevent overwriting
+    unique_filename = f"{uuid4().hex}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{file.filename}"
+    file_path = os.path.join(file_directory, unique_filename)
+    
+    try:
+        # Save the file asynchronously
+        async with aiofiles.open(file_path, 'wb') as out_file:
+            content = await file.read()  # Read file contents
+            await out_file.write(content)  # Write to disk
+    except Exception as e:
+        # Handle any potential errors that occur during file save
+        print(f"Error saving file {file.filename}: {e}")
+        raise e
+
+    return file_path  # Return the file path for storage in the database
+
 # Complete Rider Registration
 @router.post("/rider-complete-registration/", status_code=status.HTTP_200_OK)
 async def complete_registration(
@@ -151,7 +161,7 @@ async def complete_registration(
         await session.commit()
 
         # Generate a unique account number
-        account_number = f"ACC{random.randint(10000000, 99999999)}"
+        account_number = f"{random.randint(10000000, 99999999)}"
 
         # Create User
         user = User(
@@ -211,7 +221,274 @@ async def complete_registration(
         await session.commit()  # Commit the User, Rider, Wallet, and Referral entries
 
         return {"message": "Registration completed successfully", "account_number": account_number}
+
+
+# Drivers Pre-Registration
+@router.post("/pre-register/driver/", status_code=status.HTTP_200_OK)
+async def pre_register_driver(
+    request: DriverPreRegisterRequest,
+    db: AsyncSession = Depends(get_async_db)
+):
+    # Extract data from the request
+    full_name = request.full_name
+    user_name = request.user_name
+    phone_number = request.phone_number
+    email = request.email
+    password = request.password
+
+    # Check if the phone number or email is associated with a driver
+    async with db as session:
+        existing_driver_query = (
+            select(Driver)
+            .join(User, User.id == Driver.user_id)
+            .where(
+                (User.phone_number == phone_number) | (User.email == email)
+            )
+            .options(joinedload(Driver.user))  # Preload user relationship for clarity
+        )
+        existing_driver = await session.execute(existing_driver_query)
+        driver_record = existing_driver.scalars().first()
+
+        if driver_record:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A driver with this phone number or email already exists."
+            )
+
+    # Generate OTP and expiration time
+    otp_code = generate_otp()
+    expiration_time = generate_otp_expiration()
+
+    # Store the user data along with the OTP in the database
+    async with db as session:
+        otp_entry = OTPVerification(
+            full_name=full_name,
+            user_name=user_name,
+            phone_number=phone_number,
+            email=email,
+            otp_code=otp_code,
+            expires_at=expiration_time,
+            is_verified=False,
+            hashed_password=hash_password(password),  # Hash the password for storage
+        )
+        session.add(otp_entry)
+        await session.commit()
+        await session.refresh(otp_entry)  # Refresh the entry to get the updated data from the database
+
+    # Uncomment the following lines if email and SMS OTP sending functionality is implemented
+    # # Send OTP via email
+    # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
+    #     email_response = await client.post(
+    #         "/auth/send-otp-email", params={"to_email": email, "otp_code": otp_code}
+    #     )
+    #     if email_response.status_code != 200:
+    #         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP email.")
+
+    # # Send OTP via SMS
+    # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
+    #     sms_response = await client.post(
+    #         "/auth/send-otp/v1/messaging/send_sms", params={"phone_number": phone_number, "otp_code": otp_code}
+    #     )
+    #     if sms_response.status_code != 200:
+    #         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP SMS.")
+
+    # Return the created OTP entry data in the response
+    return {
+        "message": "Pre-registration successful. OTP sent via email and SMS.",
+        "data": {
+            "full_name": otp_entry.full_name,
+            "user_name": otp_entry.user_name,
+            "phone_number": otp_entry.phone_number,
+            "email": otp_entry.email,
+            "otp_code": otp_entry.otp_code,
+            "expires_at": otp_entry.expires_at,
+            "is_verified": otp_entry.is_verified,
+        }
+    }
+
+# Verify OTP For Driver
+@router.post("/verify-otp/driver", status_code=status.HTTP_200_OK)
+async def verify_driver_otp(
+    phone_number: str = Form(...),
+    otp_code: str = Form(...),
+    db: AsyncSession = Depends(get_async_db)
+):
+    async with db as session:
+        otp_query = await session.execute(
+            select(OTPVerification).where(
+                OTPVerification.phone_number == phone_number,
+                OTPVerification.otp_code == otp_code,
+                OTPVerification.expires_at > datetime.utcnow(),
+                OTPVerification.is_verified == False
+            )
+        )
+        otp_entry = otp_query.scalar()
+
+        if not otp_entry:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OTP.")
+
+        otp_entry.is_verified = True
+        await session.commit()
     
+    return {"message": "OTP verified. Please proceed to complete the registration."}
+
+
+# Helper function to save an image and return its file path
+async def save_image(file: UploadFile, folder: str) -> str:
+    os.makedirs(folder, exist_ok=True)  # Ensure the directory exists
+
+    # Generate a unique filename
+    filename = f"{uuid4().hex}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{file.filename}"
+    file_path = os.path.join(folder, filename)
+
+    # Save the file
+    with open(file_path, "wb") as image_file:
+        content = await file.read()  # Read the file contents
+        image_file.write(content)   # Write the contents to the file
+    
+    return file_path
+
+
+# Use Transactions for Atomicity  When you wrap the entire registration process in a transaction,
+#  any failure (e.g., network error) will automatically roll back all changes made to the database 
+# within that transaction, ensuring data consistency.
+
+@router.post("/complete-registration/driver", status_code=status.HTTP_201_CREATED)
+async def complete_driver_registration(
+    phone_number: str = Form(...),
+    license_number: str = Form(...),
+    license_expiry: date = Form(...),
+    years_of_experience: int = Form(...),
+    # referral_code: str = Form(None),
+    vehicle_name: str = Form(...),
+    vehicle_model: str = Form(...),
+    vehicle_insurance_policy: str = Form(...),
+    vehicle_exterior_color: str = Form(...),
+    vehicle_interior_color: str = Form(...),
+    nin_number: str = Form(...),
+    driver_photo: UploadFile = File(...),
+    nin_photo: UploadFile = File(...),
+    proof_of_ownership: UploadFile = File(...),
+    db: AsyncSession = Depends(get_async_db)
+):
+    async with db.begin():  # Transaction begins here
+        # Check OTP verification
+        otp_query = await db.execute(
+            select(OTPVerification).where(
+                OTPVerification.phone_number == phone_number,
+                OTPVerification.is_verified == True
+            )
+        )
+        otp_entry = otp_query.scalar()
+
+        if not otp_entry:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Pre-registration not found or OTP not verified."
+            )
+
+        # Check if the user already exists
+        user_query = await db.execute(
+            select(User).where(User.phone_number == otp_entry.phone_number)
+        )
+        existing_user = user_query.scalar()
+
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User already exists."
+            )
+
+        # Check if NIN or license number already exists in Drivers
+        nin_query = await db.execute(
+            select(Driver).where(Driver.nin_number == nin_number)
+        )
+        existing_nin = nin_query.scalar()
+
+        if existing_nin:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Driver with this NIN already exists."
+            )
+
+        license_query = await db.execute(
+            select(Driver).where(Driver.license_number == license_number)
+        )
+        existing_license = license_query.scalar()
+
+        if existing_license:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Driver with this license number already exists."
+            )
+
+        # Create User record
+        user = User(
+            full_name=otp_entry.full_name,
+            user_name=otp_entry.user_name,
+            phone_number=otp_entry.phone_number,
+            email=otp_entry.email,
+            hashed_password=otp_entry.hashed_password,
+            user_type=UserType.DRIVER,
+            user_status="AWAITING",
+            created_at=datetime.utcnow()
+        )
+        db.add(user)
+        await db.flush()  # Get the `user.id` without committing
+
+        # Save images and get their paths
+        driver_photo_path = await save_image(driver_photo, './assets/drivers/driver_photos')
+        nin_photo_path = await save_image(nin_photo, './assets/drivers/nin_photos')
+        proof_of_ownership_path = await save_image(proof_of_ownership, './assets/drivers/proof_of_ownership')
+
+        # Create Driver profile
+        driver = Driver(
+            user_id=user.id,
+            driver_photo=driver_photo_path,  # Store file path as a string
+            license_number=license_number,
+            license_expiry=license_expiry,
+            years_of_experience=years_of_experience,
+            # referral_code=referral_code,
+            vehicle_name=vehicle_name,
+            vehicle_model=vehicle_model,
+            vehicle_insurance_policy=vehicle_insurance_policy,
+            vehicle_exterior_color=vehicle_exterior_color,
+            vehicle_interior_color=vehicle_interior_color,
+            nin_photo=nin_photo_path,        # Store file path as a string
+            nin_number=nin_number,
+            proof_of_ownership=proof_of_ownership_path  # Store file path as a string
+        )
+        db.add(driver)
+
+        # Generate a unique account number
+        account_number = f"{random.randint(1000000000, 9999999999)}"
+
+        # Create Wallet profile
+        wallet = Wallet(
+            user_id=user.id,
+            balance=0.0,
+            account_number=account_number  # Dynamically generated account number
+        )
+        db.add(wallet)
+
+        # Commit the transaction
+        await db.commit()
+
+        # Refresh to get the latest state
+        await db.refresh(user)
+        await db.refresh(driver)
+        await db.refresh(wallet)
+
+    return {
+        "message": "Driver registration and account creation completed successfully.",
+        "data": {
+            "user_id": user.id,
+            "driver_id": driver.id,
+            "wallet_balance": wallet.balance,
+            "account_number": wallet.account_number,
+        }
+    }
+
 
 # Rider Signup Endpoint
 @router.post("/signup/rider/", status_code=status.HTTP_201_CREATED)
@@ -590,14 +867,24 @@ async def get_driver_referral_code(driver_id: int, db: AsyncSession = Depends(ge
 # Update Rider Profile
 # Helper function to save the image to disk
 async def save_image(file: UploadFile, folder: str) -> str:
+    # Ensure the folder path is available
     file_directory = f"./assets/riders/{folder}"
     os.makedirs(file_directory, exist_ok=True)  # Create directory if it doesn’t exist
-    file_path = os.path.join(file_directory, file.filename)
     
-    # Save the file asynchronously
-    async with aiofiles.open(file_path, 'wb') as out_file:
-        content = await file.read()  # Read file contents
-        await out_file.write(content)  # Write to disk
+    # Generate a unique filename to prevent overwriting
+    unique_filename = f"{uuid4().hex}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{file.filename}"
+    file_path = os.path.join(file_directory, unique_filename)
+    
+    try:
+        # Save the file asynchronously
+        async with aiofiles.open(file_path, 'wb') as out_file:
+            content = await file.read()  # Read file contents
+            await out_file.write(content)  # Write to disk
+    except Exception as e:
+        # Handle any potential errors that occur during file save
+        print(f"Error saving file {file.filename}: {e}")
+        raise e
+
     return file_path  # Return the file path for storage in the database
 
 @router.put("/riders/{rider_id}/profile", response_model=RiderProfileUpdate)
@@ -662,6 +949,7 @@ async def update_rider_profile(
         profile_photo=rider.rider_photo,
         nin_photo=rider.nin_photo
     )
+
 
 # Get Rider Profile
 @router.get("/riders/{rider_id}/profile", response_model=RiderProfile)

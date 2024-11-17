@@ -79,11 +79,20 @@ class Driver(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    driver_photo = Column(LargeBinary, nullable=True)
-    license_number = Column(String, unique=True, index=True)
-    license_expiry = Column(Date, nullable=False)
-    years_of_experience = Column(Integer, nullable=False)
-    referral_code = Column(String, unique=True, nullable=True)  # New field for referral code
+    driver_photo = Column(String, nullable=True)
+    license_number = Column(String, unique=True, index=True, )
+    license_expiry = Column(Date, nullable=True)
+    years_of_experience = Column(Integer, nullable=True)
+    vehicle_name = Column(String,  nullable=True)  
+    vehicle_model = Column(String, nullable=True)
+    vehicle_insurance_policy = Column(String,  nullable=True)  
+    vehicle_exterior_color = Column(String,  nullable=True)  
+    vehicle_interior_color = Column(String, unique=True, nullable=True)  
+    referral_code = Column(String, unique=True, nullable=True)  
+    nin_photo = Column(String,  nullable=True)  
+    nin_number = Column(String, unique=True, nullable=True)
+    proof_of_ownership = Column(String, nullable=True)  
+
 
     # Relationships
     vehicle = relationship("Vehicle", back_populates="driver", uselist=False)
@@ -109,6 +118,7 @@ class Vehicle(Base):
     vehicle_status = Column(String, index=True)
     
     driver = relationship("Driver", back_populates="vehicle", uselist=False)
+
 
 # Ride Model
 class Ride(Base):
@@ -149,6 +159,7 @@ class OTPVerification(Base):
     hashed_password = Column(String, nullable=False)
     referral_code = Column(String, nullable=True)
     otp_type = Column(SQLAEnum(OTPTypeEnum), nullable=True)  # New field for OTP type
+  
 
 
 # Admin Model

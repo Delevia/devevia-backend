@@ -6,6 +6,10 @@ from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional
 from fastapi import UploadFile
 from ..enums import GenderEnum
+from datetime import date
+from fastapi import Form
+
+
 
 
 class OtpPhoneNumberRequest(BaseModel):
@@ -72,4 +76,34 @@ class RiderProfile(BaseModel):
 
 
 
+# Define a Pydantic model for the request body
+class PreRegisterRequest(BaseModel):
+    full_name: str = Field(..., title="Full Name", description="The full name of the user")
+    user_name: str = Field(..., title="Username", description="The username of the user")
+    phone_number: str = Field(..., title="Phone Number", description="The phone number of the user")
+    email: str = Field(..., title="Email", description="The email address of the user")
+    password: str = Field(..., title="Password", description="The user's password")
+    referral_code: str = Field(None, title="Referral Code", description="Optional referral code for the user")
 
+
+class DriverPreRegisterRequest(BaseModel):
+    full_name: str
+    user_name: str
+    phone_number: str
+    email: EmailStr
+    password: str
+
+
+
+class DriverCompleteRegistrationRequest(BaseModel):
+    phone_number: str = Form(...)
+    license_number: str = Form(...)
+    license_expiry: date = Form(...)
+    years_of_experience: int = Form(...)
+    referral_code: str = Form(...)
+    vehicle_name: str = Form(...)
+    vehicle_model: str = Form(...)
+    vehicle_insurance_policy: str = Form(...)
+    vehicle_exterior_color: str = Form(...)
+    vehicle_interior_color: str = Form(...)
+    nin_number: str = Form(...)
