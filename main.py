@@ -6,12 +6,14 @@ from sqlalchemy.future import select
 from sqlalchemy import delete
 from datetime import datetime, timedelta
 import logging
-
 from app.routers import auth, users, rides, wallet, chatMessage
 from app.database import Base, async_engine, get_async_db
 from app.models import Ride, OTPVerification, ChatMessage
 from app.utils.connection_manager import ConnectionManager
-from app.scheduler import start_scheduler  # Assuming this is for additional scheduling if needed
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -25,27 +27,51 @@ app.add_middleware(
     allow_headers=["*"],  # Allow all headers
 )
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Initialize WebSocket Connection Manager
+# WebSocket Connection Manager
 manager = ConnectionManager()
 
-# Asynchronous function to create tables
-async def create_tables():
-    async with async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
 
-# Run the table creation when the app starts
+# Function to delete expired OTPs
+async def delete_expired_otps():
+    """
+    Deletes expired OTPs from the database.
+    """
+    try:
+        async with get_async_db() as db:
+            expiration_threshold = datetime.utcnow() - timedelta(minutes=5)
+            logger.info(f"Deleting OTPs older than {expiration_threshold}.")
+            
+            # Execute deletion query
+            result = await db.execute(
+                delete(OTPVerification).where(OTPVerification.expires_at <= expiration_threshold)
+            )
+            await db.commit()
+            
+            deleted_count = result.rowcount if result else 0
+            logger.info(f"Deleted {deleted_count} expired OTP(s).")
+    except Exception as e:
+        logger.error(f"Error deleting expired OTPs: {e}")
+
+
+# Schedule periodic OTP deletion on app startup
 @app.on_event("startup")
-async def on_startup():
-    await create_tables()
-    start_scheduler()  # Assuming this is necessary to initialize your scheduling
+@repeat_every(seconds=300, wait_first=False)  # Run every 5 minutes, start immediately
+async def schedule_delete_expired_otps():
+    logger.info("Executing scheduled OTP deletion task.")
+    await delete_expired_otps()
+
 
 # WebSocket endpoint for chat within rides
 @app.websocket("/ws/chat/{ride_id}/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, ride_id: int, user_id: int, db: AsyncSession = Depends(get_async_db)):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    ride_id: int,
+    user_id: int,
+    db: AsyncSession = Depends(get_async_db)
+):
+    """
+    WebSocket endpoint for chat within a ride.
+    """
     # Check if the ride exists
     result = await db.execute(select(Ride).filter_by(id=ride_id))
     ride = result.scalar()
@@ -86,6 +112,8 @@ async def websocket_endpoint(websocket: WebSocket, ride_id: int, user_id: int, d
             # Send the message to the recipient
             if recipient_id in [ride.rider_id, ride.driver_id]:
                 await manager.send_personal_message(f"User {user_id}: {message}", recipient_id)
+            else:
+                await websocket.send_text("Recipient not part of this ride.")
 
     except WebSocketDisconnect:
         await manager.disconnect(user_id)
@@ -94,27 +122,10 @@ async def websocket_endpoint(websocket: WebSocket, ride_id: int, user_id: int, d
         logger.error(f"Unexpected error in WebSocket: {e}")
         await websocket.close(code=1011)  # Close with a server error code
 
-# Include routers (ensure they are asynchronous as well)
+
+# Include routers
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(users.router, prefix="/users", tags=["Users"])
 app.include_router(rides.router, prefix="/rides", tags=["Rides"])
 app.include_router(wallet.router, prefix="/wallet", tags=["Wallet"])
-app.include_router(chatMessage.router, prefix="/chatMessage", tags=["chatMessage"])
-
-# Periodic background task to delete expired OTPs
-@repeat_every(seconds=300)  # Runs every 5 minutes
-async def delete_expired_otps():
-    async with get_async_db() as db:
-        expiration_threshold = datetime.utcnow() - timedelta(minutes=5)
-        
-        # Log before deletion
-        logger.info("Starting expired OTP deletion task.")
-        
-        result = await db.execute(
-            delete(OTPVerification).where(OTPVerification.expires_at <= expiration_threshold)
-        )
-        await db.commit()
-        
-        # Log after deletion with result details
-        deleted_count = result.rowcount if result else 0
-        logger.info(f"Expired OTP deletion task completed. Total deleted: {deleted_count}")
+app.include_router(chatMessage.router, prefix="/chatMessage", tags=["ChatMessage"])

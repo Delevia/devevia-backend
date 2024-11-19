@@ -87,7 +87,7 @@ class Driver(Base):
     vehicle_model = Column(String, nullable=True)
     vehicle_insurance_policy = Column(String,  nullable=True)  
     vehicle_exterior_color = Column(String,  nullable=True)  
-    vehicle_interior_color = Column(String, unique=True, nullable=True)  
+    vehicle_interior_color = Column(String, nullable=True)  
     referral_code = Column(String, unique=True, nullable=True)  
     nin_photo = Column(String,  nullable=True)  
     nin_number = Column(String, unique=True, nullable=True)

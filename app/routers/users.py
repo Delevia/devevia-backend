@@ -359,7 +359,6 @@ async def complete_driver_registration(
     license_number: str = Form(...),
     license_expiry: date = Form(...),
     years_of_experience: int = Form(...),
-    # referral_code: str = Form(None),
     vehicle_name: str = Form(...),
     vehicle_model: str = Form(...),
     vehicle_insurance_policy: str = Form(...),
@@ -370,9 +369,10 @@ async def complete_driver_registration(
     nin_photo: UploadFile = File(...),
     proof_of_ownership: UploadFile = File(...),
     db: AsyncSession = Depends(get_async_db)
-):
-    async with db.begin():  # Transaction begins here
-        # Check OTP verification
+) -> Any:
+    # Transaction begins
+    async with db.begin():
+        # Verify OTP
         otp_query = await db.execute(
             select(OTPVerification).where(
                 OTPVerification.phone_number == phone_number,
@@ -380,7 +380,6 @@ async def complete_driver_registration(
             )
         )
         otp_entry = otp_query.scalar()
-
         if not otp_entry:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -391,38 +390,25 @@ async def complete_driver_registration(
         user_query = await db.execute(
             select(User).where(User.phone_number == otp_entry.phone_number)
         )
-        existing_user = user_query.scalar()
-
-        if existing_user:
+        if user_query.scalar():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="User already exists."
             )
 
-        # Check if NIN or license number already exists in Drivers
-        nin_query = await db.execute(
-            select(Driver).where(Driver.nin_number == nin_number)
-        )
-        existing_nin = nin_query.scalar()
-
-        if existing_nin:
+        # Check for existing NIN or license number
+        if await db.scalar(select(Driver).where(Driver.nin_number == nin_number)):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Driver with this NIN already exists."
             )
-
-        license_query = await db.execute(
-            select(Driver).where(Driver.license_number == license_number)
-        )
-        existing_license = license_query.scalar()
-
-        if existing_license:
+        if await db.scalar(select(Driver).where(Driver.license_number == license_number)):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Driver with this license number already exists."
             )
 
-        # Create User record
+        # Create User
         user = User(
             full_name=otp_entry.full_name,
             user_name=otp_entry.user_name,
@@ -434,9 +420,9 @@ async def complete_driver_registration(
             created_at=datetime.utcnow()
         )
         db.add(user)
-        await db.flush()  # Get the `user.id` without committing
+        await db.flush()  # Get user ID without committing
 
-        # Save images and get their paths
+        # Save images and retrieve paths
         driver_photo_path = await save_image(driver_photo, './assets/drivers/driver_photos')
         nin_photo_path = await save_image(nin_photo, './assets/drivers/nin_photos')
         proof_of_ownership_path = await save_image(proof_of_ownership, './assets/drivers/proof_of_ownership')
@@ -444,40 +430,33 @@ async def complete_driver_registration(
         # Create Driver profile
         driver = Driver(
             user_id=user.id,
-            driver_photo=driver_photo_path,  # Store file path as a string
+            driver_photo=driver_photo_path,
             license_number=license_number,
             license_expiry=license_expiry,
             years_of_experience=years_of_experience,
-            # referral_code=referral_code,
             vehicle_name=vehicle_name,
             vehicle_model=vehicle_model,
             vehicle_insurance_policy=vehicle_insurance_policy,
             vehicle_exterior_color=vehicle_exterior_color,
             vehicle_interior_color=vehicle_interior_color,
-            nin_photo=nin_photo_path,        # Store file path as a string
+            nin_photo=nin_photo_path,
             nin_number=nin_number,
-            proof_of_ownership=proof_of_ownership_path  # Store file path as a string
+            proof_of_ownership=proof_of_ownership_path
         )
         db.add(driver)
 
-        # Generate a unique account number
-        account_number = f"{random.randint(1000000000, 9999999999)}"
-
-        # Create Wallet profile
+        # Generate Wallet
         wallet = Wallet(
             user_id=user.id,
             balance=0.0,
-            account_number=account_number  # Dynamically generated account number
+            account_number=f"{random.randint(1000000000, 9999999999)}"
         )
         db.add(wallet)
 
-        # Commit the transaction
-        await db.commit()
-
-        # Refresh to get the latest state
-        await db.refresh(user)
-        await db.refresh(driver)
-        await db.refresh(wallet)
+    # Refresh outside the transaction block
+    await db.refresh(user)
+    await db.refresh(driver)
+    await db.refresh(wallet)
 
     return {
         "message": "Driver registration and account creation completed successfully.",
@@ -488,7 +467,6 @@ async def complete_driver_registration(
             "account_number": wallet.account_number,
         }
     }
-
 
 # Rider Signup Endpoint
 @router.post("/signup/rider/", status_code=status.HTTP_201_CREATED)
