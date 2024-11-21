@@ -10,7 +10,9 @@ from app.routers import auth, users, rides, wallet, chatMessage
 from app.database import Base, async_engine, get_async_db
 from app.models import Ride, OTPVerification, ChatMessage
 from app.utils.connection_manager import ConnectionManager
-
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+from app.utils.otp_delete_test import delete_expired_otps
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,36 +32,40 @@ app.add_middleware(
 # WebSocket Connection Manager
 manager = ConnectionManager()
 
-
-# Function to delete expired OTPs
-async def delete_expired_otps():
-    """
-    Deletes expired OTPs from the database.
-    """
-    try:
-        async with get_async_db() as db:
-            expiration_threshold = datetime.utcnow() - timedelta(minutes=5)
-            logger.info(f"Deleting OTPs older than {expiration_threshold}.")
-            
-            # Execute deletion query
-            result = await db.execute(
-                delete(OTPVerification).where(OTPVerification.expires_at <= expiration_threshold)
-            )
-            await db.commit()
-            
-            deleted_count = result.rowcount if result else 0
-            logger.info(f"Deleted {deleted_count} expired OTP(s).")
-    except Exception as e:
-        logger.error(f"Error deleting expired OTPs: {e}")
+# Set up the scheduler
+scheduler = AsyncIOScheduler()
 
 
-# Schedule periodic OTP deletion on app startup
 @app.on_event("startup")
-@repeat_every(seconds=300, wait_first=False)  # Run every 5 minutes, start immediately
-async def schedule_delete_expired_otps():
-    logger.info("Executing scheduled OTP deletion task.")
-    await delete_expired_otps()
+async def start_scheduler():
+    """
+    Start the scheduler to periodically delete expired OTPs.
+    """
+    logger.info("Starting scheduler for OTP cleanup...")
+    # Schedule the OTP cleanup task to run every 5 minutes
+    scheduler.add_job(
+        delete_expired_otps,  # Function to run
+        trigger=IntervalTrigger(minutes=2),  # Every 2 minutes
+        id="otp_cleanup",  # Job id
+        name="Delete expired OTPs",  # Job name
+        replace_existing=True  # Replace the job if it already exists
+    )
+    scheduler.start()
+    logger.info("OTP cleanup task scheduled.")
 
+@app.on_event("shutdown")
+async def shutdown_scheduler():
+    """
+    Shutdown the scheduler gracefully when the app shuts down.
+    """
+    logger.info("Shutting down scheduler...")
+    scheduler.shutdown()
+    logger.info("Scheduler stopped.")
+
+# Optional root endpoint to test the app
+@app.get("/")
+async def read_root():
+    return {"message": "OTP Cleanup Service is running!"}
 
 # WebSocket endpoint for chat within rides
 @app.websocket("/ws/chat/{ride_id}/{user_id}")

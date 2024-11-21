@@ -43,7 +43,6 @@ logger = logging.getLogger(__name__)
 
 
 
-# Rider Pre Registration
 @router.post("/pre-register/rider/", status_code=status.HTTP_200_OK)
 async def pre_register_rider(
     request: PreRegisterRequest,
@@ -57,12 +56,35 @@ async def pre_register_rider(
     password = request.password
     referral_code = request.referral_code
 
-    # Generate OTP and expiration time
-    otp_code = generate_otp()
-    expiration_time = generate_otp_expiration()
-
-    # Store the user data along with the OTP in the database
     async with db as session:
+        # Handle referral code if provided
+        if referral_code:
+            # Check if referral code belongs to a rider
+            referrer_rider_query = await session.execute(
+                select(Rider).filter(Rider.referral_code == referral_code)
+            )
+            referrer_rider = referrer_rider_query.scalars().first()
+
+            # Check if referral code belongs to a driver if not found in riders
+            referrer_driver = None
+            if not referrer_rider:
+                referrer_driver_query = await session.execute(
+                    select(Driver).filter(Driver.referral_code == referral_code)
+                )
+                referrer_driver = referrer_driver_query.scalars().first()
+
+            # Raise an error if the referral code is invalid
+            if not referrer_rider and not referrer_driver:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid referral code."
+                )
+
+        # Generate OTP and expiration time
+        otp_code = generate_otp()
+        expiration_time = generate_otp_expiration()
+
+        # Store the user data along with the OTP in the database
         otp_entry = OTPVerification(
             full_name=full_name,
             user_name=user_name,
@@ -161,7 +183,7 @@ async def complete_registration(
         await session.commit()
 
         # Generate a unique account number
-        account_number = f"{random.randint(10000000, 99999999)}"
+        account_number = f"{random.randint(1000000000, 9999999999)}"
 
         # Create User
         user = User(
