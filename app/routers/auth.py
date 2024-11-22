@@ -24,6 +24,8 @@ from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 from typing import Optional
 from app.database import get_async_db   # Replace 'app.database' with the correct path
+from fastapi.encoders import jsonable_encoder
+
 
 
 
@@ -76,6 +78,9 @@ async def login_rider(
     # Generate tokens for the rider
     access_token = create_access_token(data={"sub": str(rider.id)})
     refresh_token = create_refresh_token(data={"sub": str(rider.id)}, db=db)
+     # Prepare the response data
+    user_data = jsonable_encoder(user)  # Serialize the user data
+    user_data.pop("hashed_password", None)  # Remove sensitive fields if needed
 
     # Return a response with rider ID and tokens
     return {
@@ -84,7 +89,9 @@ async def login_rider(
         "rider_id": rider.id,  # Return the rider ID here
         "access_token": access_token,
         "refresh_token": refresh_token,
-        "token_type": "bearer"
+        "token_type": "bearer",
+        "user_data": user_data  # Include user data in the response
+
     }
 
 # Driver Login Endpoint
@@ -115,6 +122,9 @@ async def login_driver(
     # Generate tokens for the driver
     access_token = create_access_token(data={"sub": str(driver.id)})
     refresh_token = create_refresh_token(data={"sub": str(driver.id)}, db=db)  # Add await for async call
+    user_data = jsonable_encoder(user)  # Serialize the user data
+    user_data.pop("hashed_password", None)  # Remove sensitive fields if needed
+
 
     # Return a response with driver ID and tokens
     return {
@@ -123,7 +133,9 @@ async def login_driver(
         "driver_id": driver.id,  # Return the driver ID here
         "access_token": access_token,
         "refresh_token": refresh_token,
-        "token_type": "bearer"
+        "token_type": "bearer",
+        "user_data": user_data  # Include user data in the response
+
     }
 
 # Refresh Token Endpoint to get new Access Token
