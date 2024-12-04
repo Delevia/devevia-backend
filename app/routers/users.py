@@ -22,6 +22,8 @@ from pydantic import BaseModel, Field, EmailStr, ValidationError
 from app.utils.security import hash_password
 import aiofiles
 from sqlalchemy.orm import joinedload
+import httpx
+
 
 router = APIRouter()
 
@@ -101,7 +103,7 @@ async def pre_register_rider(
         await session.refresh(otp_entry)  # Refresh the entry to get the updated data from the database
 
     # Uncomment the following lines if email and SMS OTP sending functionality is implemented
-    # # Send OTP via email
+    # Send OTP via email
     # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
     #     email_response = await client.post(
     #         "/auth/send-otp-email", params={"to_email": email, "otp_code": otp_code}
@@ -298,7 +300,7 @@ async def pre_register_driver(
         await session.refresh(otp_entry)  # Refresh the entry to get the updated data from the database
 
     # Uncomment the following lines if email and SMS OTP sending functionality is implemented
-    # # Send OTP via email
+    # Send OTP via email
     # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
     #     email_response = await client.post(
     #         "/auth/send-otp-email", params={"to_email": email, "otp_code": otp_code}
@@ -984,3 +986,4 @@ async def get_rider_profile(
     }
 
     return profile_data
+

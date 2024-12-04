@@ -99,6 +99,12 @@ class LoginSchema(BaseModel):
     phone_number: str
     password: str
 
+# Define a Pydantic model for login input data
+class LoginResponseSchema(BaseModel):
+    access_token: str
+    refresh_token: str
+
+
 
 # Define a Pydantic model for Admin
 class AdminCreate(BaseModel):

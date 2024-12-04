@@ -7,6 +7,8 @@ from datetime import datetime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func  # Import func to use for timestamp
 import uuid
+from sqlalchemy.dialects.postgresql import UUID
+
 
 
 Base = declarative_base()
@@ -36,6 +38,8 @@ class User(Base):
     # Chat relationships
     sent_messages = relationship("ChatMessage", foreign_keys="[ChatMessage.sender_id]", back_populates="sender")
     received_messages = relationship("ChatMessage", foreign_keys="[ChatMessage.receiver_id]", back_populates="receiver")
+    password_resets = relationship("PasswordReset", back_populates="user")
+
 
 
 class Referral(Base):
@@ -287,3 +291,18 @@ class CompanyWallet(Base):
 
     # Relationship with transactions
     transactions = relationship("Transaction", back_populates="company_wallet")    
+
+
+
+class PasswordReset(Base):
+    __tablename__ = "password_resets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    reset_token = Column(String(255), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+    used = Column(Boolean, default=False)
+
+    # Define relationships (optional, depending on your app's design)
+    user = relationship("User", back_populates="password_resets")

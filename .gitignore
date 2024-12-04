@@ -152,3 +152,8 @@ Thumbs.db
 
 # Other dependency folders
 node_modules/
+
+
+docker-compose.yml
+Dockerfile-photon
+photon/

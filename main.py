@@ -35,14 +35,14 @@ manager = ConnectionManager()
 # Set up the scheduler
 scheduler = AsyncIOScheduler()
 
-
 @app.on_event("startup")
 async def start_scheduler():
     """
     Start the scheduler to periodically delete expired OTPs.
     """
     logger.info("Starting scheduler for OTP cleanup...")
-    # Schedule the OTP cleanup task to run every 5 minutes
+
+    # Schedule the OTP cleanup task to run every 2 minutes
     scheduler.add_job(
         delete_expired_otps,  # Function to run
         trigger=IntervalTrigger(minutes=2),  # Every 2 minutes
@@ -50,6 +50,8 @@ async def start_scheduler():
         name="Delete expired OTPs",  # Job name
         replace_existing=True  # Replace the job if it already exists
     )
+
+    # Start the scheduler
     scheduler.start()
     logger.info("OTP cleanup task scheduled.")
 
@@ -59,7 +61,13 @@ async def shutdown_scheduler():
     Shutdown the scheduler gracefully when the app shuts down.
     """
     logger.info("Shutting down scheduler...")
-    scheduler.shutdown()
+
+    # Ensure the event loop is still running
+    if scheduler._eventloop and scheduler._eventloop.is_running():
+        scheduler.shutdown()
+    else:
+        logger.warning("Scheduler event loop is not running!")
+
     logger.info("Scheduler stopped.")
 
 # Optional root endpoint to test the app

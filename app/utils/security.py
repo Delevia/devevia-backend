@@ -1,5 +1,5 @@
 
-
+import secrets
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -8,6 +8,8 @@ from ..models import RefreshToken, BlacklistedToken
 from ..database import get_async_db
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
+
 
 # Configuration variables
 SECRET_KEY = "edaac9e321d9f0aa975f0929beb0fbed4c0f8e63"  # Replace with a secure key
@@ -21,7 +23,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # Create Access Token
-def create_access_token(data: dict, expires_delta: timedelta = timedelta(minutes=15)):
+def create_access_token(data: dict, expires_delta: timedelta = timedelta(minutes=30)):
     to_encode = data.copy()
     expire = datetime.utcnow() + expires_delta
     to_encode.update({"exp": expire, "sub": str(data["sub"])})  # Convert sub to string
@@ -31,29 +33,29 @@ def create_access_token(data: dict, expires_delta: timedelta = timedelta(minutes
 
 
 # Create Refresh Token
-def create_refresh_token(data: dict, db: Session, expires_delta: timedelta = timedelta(days=7)) -> str:
+# Create Refresh Token (Async)
+async def create_refresh_token(data: dict, db: AsyncSession, expires_delta: timedelta = timedelta(days=7)) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + expires_delta
     to_encode.update({"exp": expire, "sub": str(data["sub"])})  # Convert sub to string
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
     try:
-        # Create a new RefreshToken record
+        # Create a new RefreshToken record asynchronously
         refresh_token = RefreshToken(
             token=encoded_jwt,
             user_id=int(data["sub"]),  # Convert back to integer for database storage
             expires_at=expire
         )
         db.add(refresh_token)
-        db.commit()
-        db.refresh(refresh_token)
+        await db.commit()  # Use async commit
+        await db.refresh(refresh_token)  # Use async refresh
     except SQLAlchemyError as e:
         # Handle any database errors
-        db.rollback()
+        await db.rollback()
         raise HTTPException(status_code=500, detail="Database error")
 
     return encoded_jwt
-
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -134,6 +136,12 @@ def decode_access_token(token: str, db: Session) -> dict:
             detail="Invalid or expired access token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    
+
+
+# Generate Password reset Token
+def generate_reset_token():
+    return secrets.token_urlsafe(32)  # Generates a secure, URL-safe token
 
 
 

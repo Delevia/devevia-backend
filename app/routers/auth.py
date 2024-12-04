@@ -25,11 +25,13 @@ from sendgrid.helpers.mail import Mail
 from typing import Optional
 from app.database import get_async_db   # Replace 'app.database' with the correct path
 from fastapi.encoders import jsonable_encoder
+import logging
 
 
 
 
-
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 load_dotenv()
@@ -50,48 +52,66 @@ def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
 
-# Rider LOgin Endpoint
+# Rider Login Endpoint
+# Rider Login Endpoint
 @router.post("/login/rider/", status_code=status.HTTP_200_OK)
 async def login_rider(
     login_data: LoginSchema,
     db: AsyncSession = Depends(get_async_db)
 ):
-    # Query the user with the phone number and ensure user_type is "RIDER"
     async with db as session:
         result = await session.execute(
             select(User)
-            .options(joinedload(User.rider))  # Eager load the rider relationship
-            .filter(User.phone_number == login_data.phone_number, User.user_type == "RIDER")
+            .options(joinedload(User.rider))  # Load the Rider relationship
+            .filter(User.phone_number == login_data.phone_number)
         )
-        user = result.scalar()  # Fetch the user object
+        user = result.scalar()
 
-    # Validate the user's existence and password
-    if not user or not verify_password(login_data.password, user.hashed_password):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid phone number or password")
+    # Check if the user exists
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Invalid phone number or password"
+        )
+    
+    # Ensure the user type is Rider
+    if user.user_type != "RIDER":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Invalid phone number or password"
+        )
 
-    # The rider is already loaded, so we don't hit the DetachedInstanceError
+    # Validate password
+    if not verify_password(login_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid phone number or password"
+        )
+
+    # Get the Rider
     rider = user.rider
-
     if not rider:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rider not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Rider not found"
+        )
 
-    # Generate tokens for the rider
+    # Generate tokens
     access_token = create_access_token(data={"sub": str(rider.id)})
-    refresh_token = create_refresh_token(data={"sub": str(rider.id)}, db=db)
-     # Prepare the response data
-    user_data = jsonable_encoder(user)  # Serialize the user data
-    user_data.pop("hashed_password", None)  # Remove sensitive fields if needed
+    refresh_token = await create_refresh_token(data={"sub": str(user.id)}, db=db)  # Use user.id for refresh token
 
-    # Return a response with rider ID and tokens
+    # Prepare user data
+    user_data = jsonable_encoder(user)
+    user_data.pop("hashed_password", None)
+
     return {
         "message": "Login Successful",
-        "user_type": user.user_type,  # User type should be "DRIVER"
-        "rider_id": rider.id,  # Return the rider ID here
+        "user_type": user.user_type,
+        "rider_id": rider.id,
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
-        "user_data": user_data  # Include user data in the response
-
+        "user_data": user_data
     }
 
 # Driver Login Endpoint
@@ -100,43 +120,58 @@ async def login_driver(
     login_data: LoginSchema,
     db: AsyncSession = Depends(get_async_db)
 ):
-    # Query the user with the phone number and ensure user_type is "DRIVER"
     async with db as session:
+        # Retrieve user
         result = await session.execute(
             select(User)
-            .options(joinedload(User.driver))  # Eager load the driver relationship
-            .filter(User.phone_number == login_data.phone_number, User.user_type == "DRIVER")
+            .options(joinedload(User.driver))  # Ensure driver is loaded
+            .filter(User.phone_number == login_data.phone_number)
         )
-        user = result.scalar()  # Fetch the user object
+        user = result.scalar()
 
-    # Validate the driver's existence and password
-    if not user or not verify_password(login_data.password, user.hashed_password):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid phone number or password")
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Invalid phone number or password"
+            )
 
-    # Get the associated driver from the user
-    driver = user.driver
+        if user.user_type != "DRIVER":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid phone number or password"
+            )
 
-    if not driver:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Driver not found")
+        if not verify_password(login_data.password, user.hashed_password):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid phone number or password"
+            )
 
-    # Generate tokens for the driver
-    access_token = create_access_token(data={"sub": str(driver.id)})
-    refresh_token = create_refresh_token(data={"sub": str(driver.id)}, db=db)  # Add await for async call
-    user_data = jsonable_encoder(user)  # Serialize the user data
-    user_data.pop("hashed_password", None)  # Remove sensitive fields if needed
+        driver = user.driver
+        if not driver:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Driver not found"
+            )
 
+        # Create tokens using the user ID
+        access_token = create_access_token(data={"sub": str(driver.id)})
+        refresh_token = await create_refresh_token(data={"sub": str(user.id)}, db=db)  # Use user.id for refresh token
 
-    # Return a response with driver ID and tokens
-    return {
-        "message": "Login Successful",
-        "user_type": user.user_type,  # User type should be "DRIVER"
-        "driver_id": driver.id,  # Return the driver ID here
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer",
-        "user_data": user_data  # Include user data in the response
+        # Prepare user data
+        user_data = jsonable_encoder(user)
+        user_data.pop("hashed_password", None)
 
-    }
+        return {
+            "message": "Login Successful",
+            "user_type": user.user_type,
+            "driver_id": driver.id,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+            "user_data": user_data,
+        }
+
 
 # Refresh Token Endpoint to get new Access Token
 @router.post("/refresh", response_model=RequestTokenResponse)
@@ -170,13 +205,14 @@ async def logout(request: LogoutRequest, db: AsyncSession = Depends(get_async_db
 
     async with db as session:
         # Find the refresh token
-        token_record = await session.execute(
-            RefreshToken.select().filter(RefreshToken.token == refresh_token)
-        )
-        token_record = token_record.scalar()
+        stmt = select(RefreshToken).where(RefreshToken.token == refresh_token)
+        result = await session.execute(stmt)
+        token_record = result.scalar_one_or_none()
 
         if not token_record:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Refresh token not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Refresh token not found"
+            )
 
         # Mark the refresh token as revoked
         token_record.is_revoked = True
@@ -195,7 +231,6 @@ async def logout(request: LogoutRequest, db: AsyncSession = Depends(get_async_db
         await session.commit()
 
     return {"message": "Logout successful"}
-
 
 # SendGrid Email OTp
 @router.post("/send-otp-email")
@@ -261,3 +296,116 @@ async def send_otp_sms(phone_number: str, otp_code: str):
         raise HTTPException(status_code=400, detail="Failed to send OTP SMS")
 
     return {"message": "OTP sent successfully via SMS"}
+
+
+# Send Email password Reset  Link
+@router.post("/password-reset/send-email/")
+async def send_password_reset_email(to_email: str, reset_link: str):
+    """
+    Sends a password reset email using SendGrid.
+
+    Parameters:
+        - to_email (str): The recipient's email address.
+        - reset_link (str): The password reset link.
+    """
+    if not SENDGRID_API_KEY:
+        raise HTTPException(status_code=500, detail="SendGrid API key not configured")
+
+    # Create the email content for password reset
+    subject = "Reset Your Password"
+    html_content = f"""
+    <html>
+        <body>
+            <h3>Password Reset Request</h3>
+            <p>
+                We received a request to reset your password. If you didn't make this request, you can ignore this email.
+            </p>
+            <p>
+                To reset your password, click the link below:
+            </p>
+            <a href="{reset_link}" style="color: blue; text-decoration: underline;">Reset Password</a>
+            <p>
+                This link will expire in 1 hour. If it has expired, you will need to request a new password reset.
+            </p>
+            <p>
+                Regards,<br>
+                The Delevia Team
+            </p>
+        </body>
+    </html>
+    """
+
+    # Create the email message
+    message = Mail(
+        from_email=SENDGRID_EMAIL_SENDER,
+        to_emails=to_email,
+        subject=subject,
+        html_content=html_content
+    )
+
+    try:
+        # Send the email via SendGrid API
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        response = sg.send(message)
+
+        if response.status_code not in (200, 202):
+            raise HTTPException(status_code=400, detail="Failed to send password reset email")
+
+    except Exception as e:
+        print("SendGrid Error:", str(e))
+        raise HTTPException(status_code=500, detail="An error occurred while sending the password reset email")
+
+    return {"message": "Password reset email sent successfully"}
+
+
+# @router.post("/password-reset/request/")
+# async def request_password_reset(email: str, db: AsyncSession = Depends(get_async_db)):
+#     user = await db.scalar(select(User).filter(User.email == email))
+#     if not user:
+#         raise HTTPException(status_code=404, detail="User not found")
+    
+#     reset_token = generate_reset_token()
+#     expires_at = datetime.utcnow() + timedelta(hours=1)
+#     new_reset = PasswordReset(user_id=user.id, reset_token=reset_token, expires_at=expires_at)
+    
+#     db.add(new_reset)
+#     await db.commit()
+
+#     # Send email or SMS with the reset link
+#     reset_link = f"https://yourapp.com/reset-password?token={reset_token}"
+#     send_email(email, "Password Reset", f"Reset your password here: {reset_link}")
+
+#     return {"message": "Password reset link sent"}
+
+
+# @router.get("/password-reset/validate/")
+# async def validate_reset_token(token: str, db: AsyncSession = Depends(get_async_db)):
+#     reset_record = await db.scalar(
+#         select(PasswordReset)
+#         .filter(PasswordReset.reset_token == token, PasswordReset.expires_at > datetime.utcnow(), PasswordReset.used == False)
+#     )
+#     if not reset_record:
+#         raise HTTPException(status_code=400, detail="Invalid or expired token")
+
+#     return {"message": "Token is valid"}
+
+
+# @router.post("/password-reset/confirm/")
+# async def confirm_password_reset(data: ResetPasswordSchema, db: AsyncSession = Depends(get_async_db)):
+#     reset_record = await db.scalar(
+#         select(PasswordReset)
+#         .filter(PasswordReset.reset_token == data.token, PasswordReset.expires_at > datetime.utcnow(), PasswordReset.used == False)
+#     )
+#     if not reset_record:
+#         raise HTTPException(status_code=400, detail="Invalid or expired token")
+    
+#     user = await db.scalar(select(User).filter(User.id == reset_record.user_id))
+#     if not user:
+#         raise HTTPException(status_code=404, detail="User not found")
+    
+    # user.hashed_password = hash_password(data.new_password)  # Replace with password hashing logic
+    # reset_record.used = True
+
+    # await db.commit()
+    # return {"message": "Password reset successful"}
+
