@@ -6,6 +6,7 @@ from ..models import User, RefreshToken, BlacklistedToken, Rider
 from ..schemas import RefreshTokenRequest, RequestTokenResponse, LogoutRequest
 from ..schemas import pwd_context
 from dotenv import load_dotenv
+from datetime import datetime
 import os
 import requests
 from ..utils.sendchampservices import Sendchamp
@@ -198,7 +199,6 @@ async def refresh_token(request: RefreshTokenRequest, db: AsyncSession = Depends
         return {"access_token": access_token, "token_type": "bearer"}
 
 
-# Logout Endpoint
 @router.post("/logout", status_code=status.HTTP_200_OK)
 async def logout(request: LogoutRequest, db: AsyncSession = Depends(get_async_db)):
     refresh_token = request.refresh_token
@@ -212,6 +212,18 @@ async def logout(request: LogoutRequest, db: AsyncSession = Depends(get_async_db
         if not token_record:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Refresh token not found"
+            )
+
+        # Check if the token is expired
+        if token_record.expires_at and token_record.expires_at < datetime.utcnow():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Refresh token has expired"
+            )
+
+        # Check if the token is already revoked
+        if token_record.is_revoked:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Refresh token is already revoked"
             )
 
         # Mark the refresh token as revoked
@@ -231,7 +243,6 @@ async def logout(request: LogoutRequest, db: AsyncSession = Depends(get_async_db
         await session.commit()
 
     return {"message": "Logout successful"}
-
 # SendGrid Email OTp
 @router.post("/send-otp-email")
 async def send_otp_email(to_email: str, otp_code: str):
