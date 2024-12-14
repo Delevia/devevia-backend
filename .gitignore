@@ -158,3 +158,5 @@ docker-compose.yml
 Dockerfile-photon
 photon/
 Dockerfile-graphhopper
+Dockerfile-nominatim
+nominatim
