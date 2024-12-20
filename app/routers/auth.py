@@ -243,6 +243,8 @@ async def logout(request: LogoutRequest, db: AsyncSession = Depends(get_async_db
         await session.commit()
 
     return {"message": "Logout successful"}
+
+
 # SendGrid Email OTp
 @router.post("/send-otp-email")
 async def send_otp_email(to_email: str, otp_code: str):

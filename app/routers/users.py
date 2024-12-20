@@ -104,12 +104,12 @@ async def pre_register_rider(
 
     # Uncomment the following lines if email and SMS OTP sending functionality is implemented
     # Send OTP via email
-    # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
-    #     email_response = await client.post(
-    #         "/auth/send-otp-email", params={"to_email": email, "otp_code": otp_code}
-    #     )
-    #     if email_response.status_code != 200:
-    #         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP email.")
+    async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
+        email_response = await client.post(
+            "/auth/send-otp-email", params={"to_email": email, "otp_code": otp_code}
+        )
+        if email_response.status_code != 200:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP email.")
 
     # # Send OTP via SMS
     # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
@@ -299,14 +299,14 @@ async def pre_register_driver(
         await session.commit()
         await session.refresh(otp_entry)  # Refresh the entry to get the updated data from the database
 
-    # Uncomment the following lines if email and SMS OTP sending functionality is implemented
+  
     # Send OTP via email
-    # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
-    #     email_response = await client.post(
-    #         "/auth/send-otp-email", params={"to_email": email, "otp_code": otp_code}
-    #     )
-    #     if email_response.status_code != 200:
-    #         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP email.")
+    async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
+        email_response = await client.post(
+            "/auth/send-otp-email", params={"to_email": email, "otp_code": otp_code}
+        )
+        if email_response.status_code != 200:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP email.")
 
     # # Send OTP via SMS
     # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
@@ -329,6 +329,7 @@ async def pre_register_driver(
             "is_verified": otp_entry.is_verified,
         }
     }
+
 
 # Verify OTP For Driver
 @router.post("/verify-otp/driver", status_code=status.HTTP_200_OK)
