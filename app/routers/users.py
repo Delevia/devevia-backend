@@ -23,7 +23,7 @@ from app.utils.security import hash_password
 import aiofiles
 from sqlalchemy.orm import joinedload
 import httpx
-
+from fastapi import HTTPException, Query
 
 router = APIRouter()
 
@@ -44,7 +44,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-
 @router.post("/pre-register/rider/", status_code=status.HTTP_200_OK)
 async def pre_register_rider(
     request: PreRegisterRequest,
@@ -59,23 +58,46 @@ async def pre_register_rider(
     referral_code = request.referral_code
 
     async with db as session:
-        # Handle referral code if provided
+        # Check if phone number, email, or username is already registered
+        user_query = await session.execute(
+            select(User)
+            .join(Rider)
+            .filter(
+                (User.phone_number == phone_number) |
+                (User.email == email) |
+                (User.user_name == user_name)
+            )
+        )
+        existing_user = user_query.scalars().first()
+
+        if existing_user:
+            if existing_user.phone_number == phone_number:
+                detail = "Phone number is already associated with a rider."
+            elif existing_user.email == email:
+                detail = "Email address is already associated with a rider."
+            else:  # existing_user.user_name == user_name
+                detail = "Username is already taken."
+            
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=detail
+            )
+
+        # Handle referral code validation
+        referrer_rider = None
+        referrer_driver = None
         if referral_code:
-            # Check if referral code belongs to a rider
             referrer_rider_query = await session.execute(
                 select(Rider).filter(Rider.referral_code == referral_code)
             )
             referrer_rider = referrer_rider_query.scalars().first()
 
-            # Check if referral code belongs to a driver if not found in riders
-            referrer_driver = None
             if not referrer_rider:
                 referrer_driver_query = await session.execute(
                     select(Driver).filter(Driver.referral_code == referral_code)
                 )
                 referrer_driver = referrer_driver_query.scalars().first()
 
-            # Raise an error if the referral code is invalid
             if not referrer_rider and not referrer_driver:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -86,7 +108,19 @@ async def pre_register_rider(
         otp_code = generate_otp()
         expiration_time = generate_otp_expiration()
 
-        # Store the user data along with the OTP in the database
+        # Send OTP via email
+        async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
+            email_response = await client.post(
+                "/auth/send-otp-email",
+                params={"to_email": email, "otp_code": otp_code}
+            )
+            if email_response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to send OTP email."
+                )
+
+        # Add OTP entry to database
         otp_entry = OTPVerification(
             full_name=full_name,
             user_name=user_name,
@@ -95,33 +129,15 @@ async def pre_register_rider(
             otp_code=otp_code,
             expires_at=expiration_time,
             is_verified=False,
-            hashed_password=hash_password(password),  # Hash the password for storage
+            hashed_password=hash_password(password),  # Hash the password
             referral_code=referral_code
         )
         session.add(otp_entry)
         await session.commit()
-        await session.refresh(otp_entry)  # Refresh the entry to get the updated data from the database
+        await session.refresh(otp_entry)
 
-    # Uncomment the following lines if email and SMS OTP sending functionality is implemented
-    # Send OTP via email
-    async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
-        email_response = await client.post(
-            "/auth/send-otp-email", params={"to_email": email, "otp_code": otp_code}
-        )
-        if email_response.status_code != 200:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP email.")
-
-    # # Send OTP via SMS
-    # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
-    #     sms_response = await client.post(
-    #         "/auth/send-otp/v1/messaging/send_sms", params={"phone_number": phone_number, "otp_code": otp_code}
-    #     )
-    #     if sms_response.status_code != 200:
-    #         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP SMS.")
-
-    # Return the created OTP entry data in the response
     return {
-        "message": "Pre-registration successful. OTP sent via email and SMS.",
+        "message": "Pre-registration successful. OTP sent via email.",
         "data": {
             "full_name": otp_entry.full_name,
             "user_name": otp_entry.user_name,
@@ -130,7 +146,7 @@ async def pre_register_rider(
             "otp_code": otp_entry.otp_code,
             "expires_at": otp_entry.expires_at,
             "is_verified": otp_entry.is_verified,
-            "referral_code": otp_entry.referral_code
+            "referral_code": otp_entry.referral_code,
         }
     }
 
@@ -260,31 +276,37 @@ async def pre_register_driver(
     email = request.email
     password = request.password
 
-    # Check if the phone number or email is associated with a driver
     async with db as session:
-        existing_driver_query = (
-            select(Driver)
-            .join(User, User.id == Driver.user_id)
-            .where(
-                (User.phone_number == phone_number) | (User.email == email)
+        # Check if phone number, email, or username is already registered
+        existing_user_query = await session.execute(
+            select(User)
+            .join(Driver, Driver.user_id == User.id)
+            .filter(
+                (User.phone_number == phone_number) |
+                (User.email == email) |
+                (User.user_name == user_name)
             )
-            .options(joinedload(Driver.user))  # Preload user relationship for clarity
         )
-        existing_driver = await session.execute(existing_driver_query)
-        driver_record = existing_driver.scalars().first()
+        existing_user = existing_user_query.scalars().first()
 
-        if driver_record:
+        if existing_user:
+            if existing_user.phone_number == phone_number:
+                detail = "Phone number is already associated with a driver."
+            elif existing_user.email == email:
+                detail = "Email address is already associated with a driver."
+            else:  # existing_user.user_name == user_name
+                detail = "Username is already taken."
+
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="A driver with this phone number or email already exists."
+                detail=detail
             )
 
-    # Generate OTP and expiration time
-    otp_code = generate_otp()
-    expiration_time = generate_otp_expiration()
+        # Generate OTP and expiration time
+        otp_code = generate_otp()
+        expiration_time = generate_otp_expiration()
 
-    # Store the user data along with the OTP in the database
-    async with db as session:
+        # Store the user data along with the OTP in the database
         otp_entry = OTPVerification(
             full_name=full_name,
             user_name=user_name,
@@ -297,18 +319,22 @@ async def pre_register_driver(
         )
         session.add(otp_entry)
         await session.commit()
-        await session.refresh(otp_entry)  # Refresh the entry to get the updated data from the database
+        await session.refresh(otp_entry)
 
-  
     # Send OTP via email
     async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
         email_response = await client.post(
-            "/auth/send-otp-email", params={"to_email": email, "otp_code": otp_code}
+            "/auth/send-otp-email",
+            params={"to_email": email, "otp_code": otp_code}
         )
         if email_response.status_code != 200:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP email.")
-
-    # # Send OTP via SMS
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to send OTP email."
+            )
+        
+    
+        # # Send OTP via SMS
     # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
     #     sms_response = await client.post(
     #         "/auth/send-otp/v1/messaging/send_sms", params={"phone_number": phone_number, "otp_code": otp_code}
@@ -318,7 +344,7 @@ async def pre_register_driver(
 
     # Return the created OTP entry data in the response
     return {
-        "message": "Pre-registration successful. OTP sent via email and SMS.",
+        "message": "Pre-registration successful. OTP sent via email.",
         "data": {
             "full_name": otp_entry.full_name,
             "user_name": otp_entry.user_name,
@@ -386,10 +412,10 @@ async def complete_driver_registration(
     years_of_experience: int = Form(...),
     vehicle_name: str = Form(...),
     vehicle_model: str = Form(...),
-    vehicle_insurance_policy: str = Form(...),
     vehicle_exterior_color: str = Form(...),
     vehicle_interior_color: str = Form(...),
     nin_number: str = Form(...),
+    vehicle_insurance_policy: UploadFile = File(...),  # Updated
     driver_photo: UploadFile = File(...),
     nin_photo: UploadFile = File(...),
     proof_of_ownership: UploadFile = File(...),
@@ -442,9 +468,11 @@ async def complete_driver_registration(
         db.add(user)
         await db.flush()
 
+        # Save the images and the vehicle insurance policy
         driver_photo_path = await save_image(driver_photo, './assets/drivers/driver_photos')
         nin_photo_path = await save_image(nin_photo, './assets/drivers/nin_photos')
         proof_of_ownership_path = await save_image(proof_of_ownership, './assets/drivers/proof_of_ownership')
+        vehicle_insurance_policy_path = await save_image(vehicle_insurance_policy, './assets/drivers/insurance_policies')  # Added
 
         driver = Driver(
             user_id=user.id,
@@ -454,7 +482,7 @@ async def complete_driver_registration(
             years_of_experience=years_of_experience,
             vehicle_name=vehicle_name,
             vehicle_model=vehicle_model,
-            vehicle_insurance_policy=vehicle_insurance_policy,
+            vehicle_insurance_policy=vehicle_insurance_policy_path,  # Updated
             vehicle_exterior_color=vehicle_exterior_color,
             vehicle_interior_color=vehicle_interior_color,
             nin_photo=nin_photo_path,
@@ -495,11 +523,144 @@ async def complete_driver_registration(
                 "years_of_experience": driver.years_of_experience,
                 "vehicle_name": driver.vehicle_name,
                 "vehicle_model": driver.vehicle_model,
-                "vehicle_insurance_policy": driver.vehicle_insurance_policy,
+                "vehicle_insurance_policy": driver.vehicle_insurance_policy,  # Updated
                 "vehicle_exterior_color": driver.vehicle_exterior_color,
                 "vehicle_interior_color": driver.vehicle_interior_color,
                 "nin_photo": driver.nin_photo,
                 "nin_number": driver.nin_number,
+                "proof_of_ownership": driver.proof_of_ownership,
+            },
+            "wallet": {
+                "balance": wallet.balance,
+                "account_number": wallet.account_number,
+            }
+        }
+    }
+
+
+@router.post("/complete-registration/driver/usa", status_code=status.HTTP_201_CREATED)
+async def complete_driver_registration(
+    phone_number: str = Form(...),
+    license_number: str = Form(...),
+    license_expiry: date = Form(...),
+    years_of_experience: int = Form(...),
+    vehicle_name: str = Form(...),
+    vehicle_model: str = Form(...),
+    vehicle_exterior_color: str = Form(...),
+    vehicle_interior_color: str = Form(...),
+    ssn_number: str = Form(...),
+    vehicle_inspection_approval: UploadFile = File(...),
+    vehicle_insurance_policy: UploadFile = File(...),
+    driver_photo: UploadFile = File(...),
+    proof_of_ownership: UploadFile = File(...),
+    db: AsyncSession = Depends(get_async_db)
+) -> Any:
+    async with db.begin():
+        otp_query = await db.execute(
+            select(OTPVerification).where(
+                OTPVerification.phone_number == phone_number,
+                OTPVerification.is_verified == True
+            )
+        )
+        otp_entry = otp_query.scalar()
+        if not otp_entry:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Pre-registration not found or OTP not verified."
+            )
+
+        user_query = await db.execute(
+            select(User).where(User.phone_number == otp_entry.phone_number)
+        )
+        if user_query.scalar():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User already exists."
+            )
+
+        if await db.scalar(select(Driver).where(Driver.ssn_number == ssn_number)):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Driver with this SSN already exists."
+            )
+        if await db.scalar(select(Driver).where(Driver.license_number == license_number)):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Driver with this license number already exists."
+            )
+
+        user = User(
+            full_name=otp_entry.full_name,
+            user_name=otp_entry.user_name,
+            phone_number=otp_entry.phone_number,
+            email=otp_entry.email,
+            hashed_password=otp_entry.hashed_password,
+            user_type=UserType.DRIVER,
+            user_status="AWAITING",
+            created_at=datetime.utcnow()
+        )
+        db.add(user)
+        await db.flush()
+
+        driver_photo_path = await save_image(driver_photo, './assets/drivers/driver_photos')
+        proof_of_ownership_path = await save_image(proof_of_ownership, './assets/drivers/proof_of_ownership')
+        vehicle_inspection_approval_path = await save_image(
+            vehicle_inspection_approval, './assets/drivers/vehicle_inspection_approvals'
+        )
+
+        driver = Driver(
+            user_id=user.id,
+            driver_photo=driver_photo_path,
+            license_number=license_number,
+            license_expiry=license_expiry,
+            years_of_experience=years_of_experience,
+            vehicle_name=vehicle_name,
+            vehicle_model=vehicle_model,
+            vehicle_insurance_policy=await save_image(vehicle_insurance_policy, './assets/drivers/vehicle_insurance_policies'),
+            vehicle_exterior_color=vehicle_exterior_color,
+            vehicle_interior_color=vehicle_interior_color,
+            ssn_number=ssn_number,
+            vehicle_inspection_approval=vehicle_inspection_approval_path,
+            proof_of_ownership=proof_of_ownership_path
+        )
+        db.add(driver)
+
+        wallet = Wallet(
+            user_id=user.id,
+            balance=0.0,
+            account_number=f"{random.randint(1000000000, 9999999999)}"
+        )
+        db.add(wallet)
+
+    await db.refresh(user)
+    await db.refresh(driver)
+    await db.refresh(wallet)
+
+    return {
+        "message": "Driver registration and account creation completed successfully.",
+        "data": {
+            "user": {
+                "id": user.id,
+                "full_name": user.full_name,
+                "user_name": user.user_name,
+                "phone_number": user.phone_number,
+                "email": user.email,
+                "user_type": user.user_type,
+                "user_status": user.user_status,
+                "created_at": user.created_at,
+            },
+            "driver": {
+                "driver_id": driver.id,
+                "driver_photo": driver.driver_photo,
+                "license_number": driver.license_number,
+                "license_expiry": driver.license_expiry,
+                "years_of_experience": driver.years_of_experience,
+                "vehicle_name": driver.vehicle_name,
+                "vehicle_model": driver.vehicle_model,
+                "vehicle_insurance_policy": driver.vehicle_insurance_policy,
+                "vehicle_exterior_color": driver.vehicle_exterior_color,
+                "vehicle_interior_color": driver.vehicle_interior_color,
+                "vehicle_inspection_approval": driver.vehicle_inspection_approval,
                 "proof_of_ownership": driver.proof_of_ownership,
             },
             "wallet": {
@@ -907,14 +1068,17 @@ async def save_image(file: UploadFile, folder: str) -> str:
 
     return file_path  # Return the file path for storage in the database
 
+
 @router.put("/riders/{rider_id}/profile", response_model=RiderProfileUpdate)
 async def update_rider_profile(
     rider_id: int,
+    country: str = Query(..., description="Country of the rider (e.g., 'US' or 'NG')"),
     gender: Optional[str] = Form(None),
     email: Optional[str] = Form(None),
     address: Optional[str] = Form(None),
     phone_number: Optional[str] = Form(None),
     nin: Optional[str] = Form(None),
+    ssn: Optional[str] = Form(None),
     profile_photo: Union[UploadFile, None] = File(None),
     nin_photo: Union[UploadFile, None] = File(None),
     db: AsyncSession = Depends(get_async_db)
@@ -926,19 +1090,38 @@ async def update_rider_profile(
     if not rider:
         raise HTTPException(status_code=404, detail="Rider not found")
 
-    # Update rider fields if provided
-    if nin:
+    # Validate country-specific fields
+    if country == "NG":
+        if not nin or not nin_photo:
+            raise HTTPException(
+                status_code=400,
+                detail="NIN and NIN image are required for Nigerian citizens"
+            )
+    elif country == "US":
+        if not ssn:
+            raise HTTPException(
+                status_code=400,
+                detail="SSN is required for US citizens"
+            )
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported country. Please specify 'US' or 'NG'."
+        )
+
+    # Update country-specific fields
+    if country == "NG":
         rider.nin = nin
+        if nin_photo:
+            nin_photo_path = await save_image(nin_photo, "nin_photos")
+            rider.nin_photo = nin_photo_path  # Save the file path in the database
+    elif country == "US":
+        rider.ssn = ssn  # Assume `ssn` field exists in Rider model
 
     # Handle profile photo upload
     if profile_photo:
         profile_photo_path = await save_image(profile_photo, "profile_photos")
         rider.rider_photo = profile_photo_path  # Save the file path in the database
-
-    # Handle NIN photo upload
-    if nin_photo:
-        nin_photo_path = await save_image(nin_photo, "nin_photos")
-        rider.nin_photo = nin_photo_path  # Save the file path in the database
 
     # Retrieve associated user and update relevant fields
     user = await db.get(User, rider.user_id)
@@ -947,7 +1130,6 @@ async def update_rider_profile(
             user.gender = gender
         if address:
             user.address = address
-        # Update email without validation
         if email:
             user.email = email
         if phone_number:
@@ -963,11 +1145,12 @@ async def update_rider_profile(
         rider_id=rider.id,
         gender=user.gender if user else None,
         address=user.address if user else None,
-        nin=rider.nin,
+        nin=rider.nin if country == "NG" else None,
+        ssn=rider.ssn if country == "US" else None,
         email=user.email if user else None,
         phone_number=user.phone_number if user else None,
         profile_photo=rider.rider_photo,
-        nin_photo=rider.nin_photo
+        nin_photo=rider.nin_photo if country == "NG" else None
     )
 
 

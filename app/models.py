@@ -66,6 +66,8 @@ class Rider(Base):
     referral_code = Column(String(10), unique=True)  # UUID string for referral code
     nin = Column(String(11), nullable=True)  
     nin_photo = Column(String, nullable=True)  # Binary data for NIN photo added here
+    social_security_number = Column(String, nullable=True) 
+    ssn_number = Column(String, nullable=True, unique=True) 
     
     # Relationships
     user = relationship("User", back_populates="rider")
@@ -96,6 +98,9 @@ class Driver(Base):
     nin_photo = Column(String,  nullable=True)  
     nin_number = Column(String, unique=True, nullable=True)
     proof_of_ownership = Column(String, nullable=True)  
+    ssn_number = Column(String, nullable=True, unique=True) 
+    ssn_photo = Column(String, nullable=True) 
+    vehicle_inspection_approval = Column(String, nullable=True)
 
 
     # Relationships
@@ -294,15 +299,15 @@ class CompanyWallet(Base):
 
 
 
-class PasswordReset(Base):
-    __tablename__ = "password_resets"
+# class PasswordReset(Base):
+#     __tablename__ = "password_resets"
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    reset_token = Column(String(255), nullable=False)
-    expires_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, server_default=func.now())
-    used = Column(Boolean, default=False)
+#     id = Column(Integer, primary_key=True, index=True)
+#     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+#     reset_token = Column(String(255), nullable=False)
+#     expires_at = Column(DateTime, nullable=False)
+#     created_at = Column(DateTime, server_default=func.now())
+#     used = Column(Boolean, default=False)
 
     # Define relationships (optional, depending on your app's design)
-    user = relationship("User", back_populates="password_resets")
+    # user = relationship("User", back_populates="password_resets")
