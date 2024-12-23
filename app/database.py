@@ -4,7 +4,7 @@ from sqlalchemy.orm import declarative_base
 from sqlalchemy import MetaData
 
 # Database URL
-DATABASE_URL = "postgresql+asyncpg://postgres:eternity@localhost/Delevia"
+DATABASE_URL = "postgresql+asyncpg://postgres:password@localhost/delevia_db"
 
 # Set up the async engine with optional echo for debugging
 async_engine = create_async_engine(DATABASE_URL, future=True, echo=True)

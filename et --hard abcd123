@@ -1,0 +1,49 @@
+[33ma887054[m[33m ([m[1;36mHEAD -> [m[1;32mmain[m[33m)[m Merge branch 'main' of github.com:Delevia/devevia-backend
+[33m66b914e[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m EMAIL OTP VERIFICATION
+[33mbf842c4[m Merge branch 'main' of github.com:Delevia/devevia-backend
+[33m196c6ec[m complete driver registration updated
+[33m31681c0[m Complete Driver Registration update
+[33m029cb33[m Merge branch 'main' of github.com:Delevia/devevia-backend
+[33ma030820[m Logout Exceptions
+[33mb039eb4[m Logout Update
+[33m6f085c6[m Merge branch 'main' of github.com:Delevia/devevia-backend
+[33meb7c4cd[m Login Response Modified
+[33me699249[m verified OTP clean up
+[33m388a2f5[m Driver Login Correction
+[33m3a7ec72[m Merge branch 'main' of github.com:Delevia/devevia-backend
+[33m9be04aa[m Completed Drivers Registration
+[33m7ccae02[m Get Profilen and Update profile Completed
+[33mcfab3a6[m Merge branch 'main' of github.com:Delevia/devevia-backend
+[33m0c8b694[m requirements.txt update
+[33m917247f[m Merge branch 'main' of github.com:Delevia/devevia-backend
+[33md3d76c7[m Send OTp through Email
+[33m241ec8d[m Rider Otp pre-registration completed
+[33mb719491[m EMAIL OTP COMMIT
+[33m0bb4623[m websocket chat
+[33m882ad99[m old changes
+[33mdb8ee64[m server changes
+[33m5ddbef6[m Referral System
+[33me9b7c37[m Wallet Syetem..
+[33md0e47dc[m RIDES update
+[33mb18c187[m main file repositioned
+[33m144a17f[m[33m ([m[1;31morigin/staging[m[33m)[m rides modification
+[33m13a02a0[m Alembic
+[33m7023a4f[m OTP verification Second commit and exceptions
+[33mccad678[m OTP FIST COMMIT
+[33m0b24265[m LOgout Functionality
+[33m73b039a[m Refresh Token
+[33mbbb3a88[m Folders restructure
+[33me5d16c2[m removed __pycache__
+[33m2b71f65[m removed __pycache__
+[33mb4eed12[m venv removed
+[33m1b67ca7[m gitignore changes
+[33m6a73713[m Merge branch 'main' of https://github.com/Delevia/devevia-backend
+[33m7740bf0[m oauth2 setting
+[33mfdc5f73[m Login Endpoints
+[33mb0ed34b[m Lisence number update
+[33m2f328ed[m Rider photo upload
+[33m564cd20[m OTP
+[33ma110d54[m env
+[33m8c20bea[m ignore
+[33ma2e9145[m First commit
+[33m07e6e80[m Initial commit

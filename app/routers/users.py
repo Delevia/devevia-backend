@@ -104,12 +104,12 @@ async def pre_register_rider(
 
     # Uncomment the following lines if email and SMS OTP sending functionality is implemented
     # Send OTP via email
-    # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
-    #     email_response = await client.post(
-    #         "/auth/send-otp-email", params={"to_email": email, "otp_code": otp_code}
-    #     )
-    #     if email_response.status_code != 200:
-    #         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP email.")
+    async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
+        email_response = await client.post(
+            "/auth/send-otp-email", params={"to_email": email, "otp_code": otp_code}
+        )
+        if email_response.status_code != 200:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP email.")
 
     # # Send OTP via SMS
     # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
@@ -299,14 +299,14 @@ async def pre_register_driver(
         await session.commit()
         await session.refresh(otp_entry)  # Refresh the entry to get the updated data from the database
 
-    # Uncomment the following lines if email and SMS OTP sending functionality is implemented
+  
     # Send OTP via email
-    # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
-    #     email_response = await client.post(
-    #         "/auth/send-otp-email", params={"to_email": email, "otp_code": otp_code}
-    #     )
-    #     if email_response.status_code != 200:
-    #         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP email.")
+    async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
+        email_response = await client.post(
+            "/auth/send-otp-email", params={"to_email": email, "otp_code": otp_code}
+        )
+        if email_response.status_code != 200:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP email.")
 
     # # Send OTP via SMS
     # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
@@ -329,6 +329,7 @@ async def pre_register_driver(
             "is_verified": otp_entry.is_verified,
         }
     }
+
 
 # Verify OTP For Driver
 @router.post("/verify-otp/driver", status_code=status.HTTP_200_OK)
@@ -394,9 +395,7 @@ async def complete_driver_registration(
     proof_of_ownership: UploadFile = File(...),
     db: AsyncSession = Depends(get_async_db)
 ) -> Any:
-    # Transaction begins
     async with db.begin():
-        # Verify OTP
         otp_query = await db.execute(
             select(OTPVerification).where(
                 OTPVerification.phone_number == phone_number,
@@ -410,7 +409,6 @@ async def complete_driver_registration(
                 detail="Pre-registration not found or OTP not verified."
             )
 
-        # Check if the user already exists
         user_query = await db.execute(
             select(User).where(User.phone_number == otp_entry.phone_number)
         )
@@ -420,7 +418,6 @@ async def complete_driver_registration(
                 detail="User already exists."
             )
 
-        # Check for existing NIN or license number
         if await db.scalar(select(Driver).where(Driver.nin_number == nin_number)):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -432,7 +429,6 @@ async def complete_driver_registration(
                 detail="Driver with this license number already exists."
             )
 
-        # Create User
         user = User(
             full_name=otp_entry.full_name,
             user_name=otp_entry.user_name,
@@ -444,14 +440,12 @@ async def complete_driver_registration(
             created_at=datetime.utcnow()
         )
         db.add(user)
-        await db.flush()  # Get user ID without committing
+        await db.flush()
 
-        # Save images and retrieve paths
         driver_photo_path = await save_image(driver_photo, './assets/drivers/driver_photos')
         nin_photo_path = await save_image(nin_photo, './assets/drivers/nin_photos')
         proof_of_ownership_path = await save_image(proof_of_ownership, './assets/drivers/proof_of_ownership')
 
-        # Create Driver profile
         driver = Driver(
             user_id=user.id,
             driver_photo=driver_photo_path,
@@ -469,7 +463,6 @@ async def complete_driver_registration(
         )
         db.add(driver)
 
-        # Generate Wallet
         wallet = Wallet(
             user_id=user.id,
             balance=0.0,
@@ -477,7 +470,6 @@ async def complete_driver_registration(
         )
         db.add(wallet)
 
-    # Refresh outside the transaction block
     await db.refresh(user)
     await db.refresh(driver)
     await db.refresh(wallet)
@@ -485,12 +477,38 @@ async def complete_driver_registration(
     return {
         "message": "Driver registration and account creation completed successfully.",
         "data": {
-            "user_id": user.id,
-            "driver_id": driver.id,
-            "wallet_balance": wallet.balance,
-            "account_number": wallet.account_number,
+            "user": {
+                "id": user.id,
+                "full_name": user.full_name,
+                "user_name": user.user_name,
+                "phone_number": user.phone_number,
+                "email": user.email,
+                "user_type": user.user_type,
+                "user_status": user.user_status,
+                "created_at": user.created_at,
+            },
+            "driver": {
+                "driver_id": driver.id,
+                "driver_photo": driver.driver_photo,
+                "license_number": driver.license_number,
+                "license_expiry": driver.license_expiry,
+                "years_of_experience": driver.years_of_experience,
+                "vehicle_name": driver.vehicle_name,
+                "vehicle_model": driver.vehicle_model,
+                "vehicle_insurance_policy": driver.vehicle_insurance_policy,
+                "vehicle_exterior_color": driver.vehicle_exterior_color,
+                "vehicle_interior_color": driver.vehicle_interior_color,
+                "nin_photo": driver.nin_photo,
+                "nin_number": driver.nin_number,
+                "proof_of_ownership": driver.proof_of_ownership,
+            },
+            "wallet": {
+                "balance": wallet.balance,
+                "account_number": wallet.account_number,
+            }
         }
     }
+
 
 # Rider Signup Endpoint
 @router.post("/signup/rider/", status_code=status.HTTP_201_CREATED)
