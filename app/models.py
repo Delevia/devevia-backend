@@ -28,7 +28,9 @@ class User(Base):
     user_status = Column(SQLAEnum(UserStatusEnum), default=UserStatusEnum.AWAITING, nullable=False)
     gender = Column(SQLAEnum(GenderEnum), nullable=True)  # Gender added here
 
+    
 
+    
     # Relationships
     refresh_tokens = relationship("RefreshToken", back_populates="user")
     kyc = relationship("KYC", uselist=False, back_populates="user")
