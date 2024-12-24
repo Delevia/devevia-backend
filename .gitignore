@@ -160,5 +160,5 @@ photon/
 Dockerfile-graphhopper
 Dockerfile-nominatim
 nominatim
-database.py
+app/database.py
 alembic.ini
