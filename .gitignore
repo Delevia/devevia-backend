@@ -160,3 +160,5 @@ photon/
 Dockerfile-graphhopper
 Dockerfile-nominatim
 nominatim
+database.py
+alembic.ini

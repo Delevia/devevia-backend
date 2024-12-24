@@ -311,65 +311,6 @@ async def send_otp_sms(phone_number: str, otp_code: str):
     return {"message": "OTP sent successfully via SMS"}
 
 
-# Send Email password Reset  Link
-@router.post("/password-reset/send-email/")
-async def send_password_reset_email(to_email: str, reset_link: str):
-    """
-    Sends a password reset email using SendGrid.
-
-    Parameters:
-        - to_email (str): The recipient's email address.
-        - reset_link (str): The password reset link.
-    """
-    if not SENDGRID_API_KEY:
-        raise HTTPException(status_code=500, detail="SendGrid API key not configured")
-
-    # Create the email content for password reset
-    subject = "Reset Your Password"
-    html_content = f"""
-    <html>
-        <body>
-            <h3>Password Reset Request</h3>
-            <p>
-                We received a request to reset your password. If you didn't make this request, you can ignore this email.
-            </p>
-            <p>
-                To reset your password, click the link below:
-            </p>
-            <a href="{reset_link}" style="color: blue; text-decoration: underline;">Reset Password</a>
-            <p>
-                This link will expire in 1 hour. If it has expired, you will need to request a new password reset.
-            </p>
-            <p>
-                Regards,<br>
-                The Delevia Team
-            </p>
-        </body>
-    </html>
-    """
-
-    # Create the email message
-    message = Mail(
-        from_email=SENDGRID_EMAIL_SENDER,
-        to_emails=to_email,
-        subject=subject,
-        html_content=html_content
-    )
-
-    try:
-        # Send the email via SendGrid API
-        sg = SendGridAPIClient(SENDGRID_API_KEY)
-        response = sg.send(message)
-
-        if response.status_code not in (200, 202):
-            raise HTTPException(status_code=400, detail="Failed to send password reset email")
-
-    except Exception as e:
-        print("SendGrid Error:", str(e))
-        raise HTTPException(status_code=500, detail="An error occurred while sending the password reset email")
-
-    return {"message": "Password reset email sent successfully"}
-
 
 # @router.post("/password-reset/request/")
 # async def request_password_reset(email: str, db: AsyncSession = Depends(get_async_db)):

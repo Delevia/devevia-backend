@@ -38,7 +38,7 @@ class User(Base):
     # Chat relationships
     sent_messages = relationship("ChatMessage", foreign_keys="[ChatMessage.sender_id]", back_populates="sender")
     received_messages = relationship("ChatMessage", foreign_keys="[ChatMessage.receiver_id]", back_populates="receiver")
-    password_resets = relationship("PasswordReset", back_populates="user")
+    # password_resets = relationship("PasswordReset", back_populates="user")
 
 
 
