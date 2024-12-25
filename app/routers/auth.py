@@ -1,8 +1,8 @@
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_async_db  # Ensure to update this to get the async session
 from ..schemas import LoginSchema
-from ..models import User, RefreshToken, BlacklistedToken, Rider
+from ..models import User, RefreshToken, BlacklistedToken, PasswordReset
 from ..schemas import RefreshTokenRequest, RequestTokenResponse, LogoutRequest
 from ..schemas import pwd_context
 from dotenv import load_dotenv
@@ -311,55 +311,36 @@ async def send_otp_sms(phone_number: str, otp_code: str):
     return {"message": "OTP sent successfully via SMS"}
 
 
+@router.post("/password-reset/verify-otp", status_code=status.HTTP_200_OK)
+async def verify_password_reset_otp(
+    email: str = Form(...),
+    otp_code: str = Form(...),
+    db: AsyncSession = Depends(get_async_db)
+):
+    async with db as session:
+        # Check if the user exists
+        user_query = await session.execute(select(User).where(User.email == email))
+        user = user_query.scalar()
 
-# @router.post("/password-reset/request/")
-# async def request_password_reset(email: str, db: AsyncSession = Depends(get_async_db)):
-#     user = await db.scalar(select(User).filter(User.email == email))
-#     if not user:
-#         raise HTTPException(status_code=404, detail="User not found")
-    
-#     reset_token = generate_reset_token()
-#     expires_at = datetime.utcnow() + timedelta(hours=1)
-#     new_reset = PasswordReset(user_id=user.id, reset_token=reset_token, expires_at=expires_at)
-    
-#     db.add(new_reset)
-#     await db.commit()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
 
-#     # Send email or SMS with the reset link
-#     reset_link = f"https://yourapp.com/reset-password?token={reset_token}"
-#     send_email(email, "Password Reset", f"Reset your password here: {reset_link}")
+        # Verify OTP and expiration
+        reset_query = await session.execute(
+            select(PasswordReset).where(
+                PasswordReset.user_id == user.id,
+                PasswordReset.reset_token == otp_code,
+                PasswordReset.expires_at > datetime.utcnow(),
+                PasswordReset.used == False
+            )
+        )
+        reset_entry = reset_query.scalar()
 
-#     return {"message": "Password reset link sent"}
+        if not reset_entry:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OTP.")
 
+        # Mark the OTP as used
+        reset_entry.used = True
+        await session.commit()
 
-# @router.get("/password-reset/validate/")
-# async def validate_reset_token(token: str, db: AsyncSession = Depends(get_async_db)):
-#     reset_record = await db.scalar(
-#         select(PasswordReset)
-#         .filter(PasswordReset.reset_token == token, PasswordReset.expires_at > datetime.utcnow(), PasswordReset.used == False)
-#     )
-#     if not reset_record:
-#         raise HTTPException(status_code=400, detail="Invalid or expired token")
-
-#     return {"message": "Token is valid"}
-
-
-# @router.post("/password-reset/confirm/")
-# async def confirm_password_reset(data: ResetPasswordSchema, db: AsyncSession = Depends(get_async_db)):
-#     reset_record = await db.scalar(
-#         select(PasswordReset)
-#         .filter(PasswordReset.reset_token == data.token, PasswordReset.expires_at > datetime.utcnow(), PasswordReset.used == False)
-#     )
-#     if not reset_record:
-#         raise HTTPException(status_code=400, detail="Invalid or expired token")
-    
-#     user = await db.scalar(select(User).filter(User.id == reset_record.user_id))
-#     if not user:
-#         raise HTTPException(status_code=404, detail="User not found")
-    
-    # user.hashed_password = hash_password(data.new_password)  # Replace with password hashing logic
-    # reset_record.used = True
-
-    # await db.commit()
-    # return {"message": "Password reset successful"}
-
+    return {"message": "OTP verified. You can now reset your password."}

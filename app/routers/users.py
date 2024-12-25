@@ -5,13 +5,14 @@ from sqlalchemy.future import select
 from sqlalchemy import or_
 from datetime import datetime, date
 from ..database import get_async_db
-from ..models import User, Rider, Driver, KYC, Admin, Wallet, Referral
-from ..schemas import KycCreate, AdminCreate, get_password_hash
+from ..models import User, Rider, Driver, KYC, Admin, Wallet, Referral, PasswordReset
+from ..schemas import KycCreate, AdminCreate, get_password_hash, pwd_context
 from ..utils.schemas_utils import RiderProfileUpdate, RiderProfile, PreRegisterRequest, DriverPreRegisterRequest
 from ..utils.utils_dependencies_files import get_current_user, generate_hashed_referral_code
 from ..utils.wallet_utilitity_functions import generate_global_unique_account_number
 import logging
 import os
+import uuid
 from ..utils.otp import generate_otp, OTPVerification, generate_otp_expiration
 from uuid import uuid4
 import random
@@ -58,10 +59,9 @@ async def pre_register_rider(
     referral_code = request.referral_code
 
     async with db as session:
-        # Check if phone number, email, or username is already registered
+        # Check if phone number, email, or username is already registered by any user (driver or rider)
         user_query = await session.execute(
             select(User)
-            .join(Rider)
             .filter(
                 (User.phone_number == phone_number) |
                 (User.email == email) |
@@ -72,16 +72,20 @@ async def pre_register_rider(
 
         if existing_user:
             if existing_user.phone_number == phone_number:
-                detail = "Phone number is already associated with a rider."
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Phone number is already associated with another user."
+                )
             elif existing_user.email == email:
-                detail = "Email address is already associated with a rider."
-            else:  # existing_user.user_name == user_name
-                detail = "Username is already taken."
-            
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=detail
-            )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email address is already associated with another user."
+                )
+            elif existing_user.user_name == user_name:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Username is already taken by another user."
+                )
 
         # Handle referral code validation
         referrer_rider = None
@@ -147,6 +151,129 @@ async def pre_register_rider(
             "expires_at": otp_entry.expires_at,
             "is_verified": otp_entry.is_verified,
             "referral_code": otp_entry.referral_code,
+        }
+    }
+
+
+@router.post("/pre-register/rider/new/", status_code=status.HTTP_200_OK)
+async def pre_register_rider(
+    request: PreRegisterRequest,
+    country: str,  # Specify the country (e.g., "Nigeria" or "USA")
+    db: AsyncSession = Depends(get_async_db)
+):
+    # Extract data from the request
+    full_name = request.full_name
+    user_name = request.user_name
+    phone_number = request.phone_number
+    email = request.email
+    password = request.password
+    referral_code = request.referral_code
+
+    # Validate country parameter
+    if country not in ["Nigeria", "USA"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid country. Please specify 'Nigeria' or 'USA'."
+        )
+
+    async with db as session:
+        # Check if phone number, email, or username is already registered
+        user_query = await session.execute(
+            select(User).filter(
+                (User.phone_number == phone_number) |
+                (User.email == email) |
+                (User.user_name == user_name)
+            )
+        )
+        existing_user = user_query.scalars().first()
+
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A user with the provided credentials (email, phone number, or username) already exists."
+            )
+
+        # Handle referral code validation
+        referrer_rider = None
+        referrer_driver = None
+        if referral_code:
+            referrer_rider_query = await session.execute(
+                select(Rider).filter(Rider.referral_code == referral_code)
+            )
+            referrer_rider = referrer_rider_query.scalars().first()
+
+            if not referrer_rider:
+                referrer_driver_query = await session.execute(
+                    select(Driver).filter(Driver.referral_code == referral_code)
+                )
+                referrer_driver = referrer_driver_query.scalars().first()
+
+            if not referrer_rider and not referrer_driver:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid referral code."
+                )
+
+        # Generate OTP and expiration time
+        otp_code = generate_otp()
+        expiration_time = generate_otp_expiration()
+
+        # Send OTP via email
+        async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
+            email_response = await client.post(
+                "/auth/send-otp-email",
+                params={"to_email": email, "otp_code": otp_code}
+            )
+            if email_response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to send OTP email."
+                )
+
+        # Create a rider record based on the country
+        rider_data = {
+            "user_id": None,  # This will be updated after user registration
+            "referral_code": referral_code,
+        }
+
+        if country == "Nigeria":
+            rider_data.update({"nin": None, "nin_photo": None})  # Placeholder for future updates
+        elif country == "USA":
+            rider_data.update({"social_security_number": None})  # Placeholder for future updates
+
+        new_rider = Rider(**rider_data)
+        session.add(new_rider)
+        await session.commit()
+        await session.refresh(new_rider)
+
+        # Add OTP entry to the database
+        otp_entry = OTPVerification(
+            full_name=full_name,
+            user_name=user_name,
+            phone_number=phone_number,
+            email=email,
+            otp_code=otp_code,
+            expires_at=expiration_time,
+            is_verified=False,
+            hashed_password=hash_password(password),  # Hash the password
+            referral_code=referral_code
+        )
+        session.add(otp_entry)
+        await session.commit()
+        await session.refresh(otp_entry)
+
+    return {
+        "message": "Pre-registration successful. OTP sent via email.",
+        "data": {
+            "full_name": otp_entry.full_name,
+            "user_name": otp_entry.user_name,
+            "phone_number": otp_entry.phone_number,
+            "email": otp_entry.email,
+            "otp_code": otp_entry.otp_code,
+            "expires_at": otp_entry.expires_at,
+            "is_verified": otp_entry.is_verified,
+            "referral_code": otp_entry.referral_code,
+            "rider_id": new_rider.id
         }
     }
 
@@ -263,7 +390,6 @@ async def complete_registration(
         return {"message": "Registration completed successfully", "account_number": account_number}
 
 
-# Drivers Pre-Registration
 @router.post("/pre-register/driver/", status_code=status.HTTP_200_OK)
 async def pre_register_driver(
     request: DriverPreRegisterRequest,
@@ -277,10 +403,9 @@ async def pre_register_driver(
     password = request.password
 
     async with db as session:
-        # Check if phone number, email, or username is already registered
+        # Check if phone number, email, or username is already registered by any user (driver or rider)
         existing_user_query = await session.execute(
             select(User)
-            .join(Driver, Driver.user_id == User.id)
             .filter(
                 (User.phone_number == phone_number) |
                 (User.email == email) |
@@ -291,16 +416,20 @@ async def pre_register_driver(
 
         if existing_user:
             if existing_user.phone_number == phone_number:
-                detail = "Phone number is already associated with a driver."
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Phone number is already associated with another user."
+                )
             elif existing_user.email == email:
-                detail = "Email address is already associated with a driver."
-            else:  # existing_user.user_name == user_name
-                detail = "Username is already taken."
-
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=detail
-            )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email address is already associated with another user."
+                )
+            elif existing_user.user_name == user_name:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Username is already taken by another user."
+                )
 
         # Generate OTP and expiration time
         otp_code = generate_otp()
@@ -332,9 +461,8 @@ async def pre_register_driver(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to send OTP email."
             )
-        
     
-        # # Send OTP via SMS
+    # # Send OTP via SMS (optional, if you want to include this functionality)
     # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
     #     sms_response = await client.post(
     #         "/auth/send-otp/v1/messaging/send_sms", params={"phone_number": phone_number, "otp_code": otp_code}
@@ -1188,3 +1316,125 @@ async def get_rider_profile(
 
     return profile_data
 
+
+@router.post("/password-reset/request", status_code=status.HTTP_200_OK)
+async def request_password_reset(
+    email: str = Form(...),  # Form data for email
+    db: AsyncSession = Depends(get_async_db)
+):
+    # Check if the user exists
+    async with db as session:
+        user_query = await session.execute(select(User).where(User.email == email))
+        user = user_query.scalar()
+
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+
+        # Generate OTP and expiration time
+        otp_code = generate_otp()
+        expiration_time = generate_otp_expiration()
+
+        # Create a new password reset record
+        password_reset = PasswordReset(
+            user_id=user.id,
+            otp_code=otp_code,  # Add OTP directly to the record
+            expires_at=expiration_time,
+            used=False
+        )
+        session.add(password_reset)
+        await session.commit()
+
+        # Send OTP via email as query parameters
+        async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
+            params = {
+                "to_email": email,
+                "otp_code": otp_code
+            }
+            email_response = await client.post(
+                "/auth/send-otp-email",
+                params=params  # Use params instead of data
+            )
+            if email_response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to send OTP email."
+                )
+
+    return {"message": "Password reset OTP sent. Please check your email."}
+
+
+@router.post("/password-reset/request/2/", status_code=status.HTTP_200_OK)
+async def request_password_reset(
+    email: str = Form(...),
+    db: AsyncSession = Depends(get_async_db)
+):
+    # Check if the user exists
+    async with db as session:
+        user_query = await session.execute(select(User).where(User.email == email))
+        user = user_query.scalar()
+
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+
+        # Generate OTP and expiration time
+        otp_code = generate_otp()
+        expiration_time = generate_otp_expiration()
+
+        # Create a new password reset record
+        reset_token = str(uuid.uuid4())
+        password_reset = PasswordReset(
+            user_id=user.id,
+            reset_token=reset_token,
+            expires_at=expiration_time,
+            used=False
+        )
+        session.add(password_reset)
+        await session.commit()
+
+        # Send OTP via email
+        async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
+            email_response = await client.post(
+                "/auth/send-otp-email",
+                params={"to_email": email, "otp_code": otp_code}
+            )
+            if email_response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to send OTP email."
+                )
+
+    return {"message": "Password reset OTP sent. Please check your email."}
+
+
+@router.post("/password-reset/reset", status_code=status.HTTP_200_OK)
+async def reset_password(
+    email: str = Form(...),
+    new_password: str = Form(...),
+    otp_code: str = Form(...),
+    db: AsyncSession = Depends(get_async_db)
+):
+    async with db as session:
+        # Verify the reset entry
+        user_query = await session.execute(select(User).where(User.email == email))
+        user = user_query.scalar()
+
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+
+        reset_query = await session.execute(
+            select(PasswordReset).where(
+                PasswordReset.user_id == user.id,
+                PasswordReset.reset_token == otp_code,
+                PasswordReset.used == True  # OTP must have been verified
+            )
+        )
+        reset_entry = reset_query.scalar()
+
+        if not reset_entry:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OTP or reset entry.")
+
+        # Update the user's password
+        user.hashed_password = pwd_context.hash(new_password)
+        await session.commit()
+
+    return {"message": "Password has been reset successfully."}

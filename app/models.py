@@ -40,7 +40,7 @@ class User(Base):
     # Chat relationships
     sent_messages = relationship("ChatMessage", foreign_keys="[ChatMessage.sender_id]", back_populates="sender")
     received_messages = relationship("ChatMessage", foreign_keys="[ChatMessage.receiver_id]", back_populates="receiver")
-    # password_resets = relationship("PasswordReset", back_populates="user")
+    password_resets = relationship("PasswordReset", back_populates="user")
 
 
 
@@ -301,15 +301,15 @@ class CompanyWallet(Base):
 
 
 
-# class PasswordReset(Base):
-#     __tablename__ = "password_resets"
+class PasswordReset(Base):
+    __tablename__ = "password_resets"
 
-#     id = Column(Integer, primary_key=True, index=True)
-#     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-#     reset_token = Column(String(255), nullable=False)
-#     expires_at = Column(DateTime, nullable=False)
-#     created_at = Column(DateTime, server_default=func.now())
-#     used = Column(Boolean, default=False)
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    otp_code = Column(String(6), nullable=False)  # Store the 6-digit OTP
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    used = Column(Boolean, default=False, nullable=False)  # Mark whether the reset token is used
 
-    # Define relationships (optional, depending on your app's design)
-    # user = relationship("User", back_populates="password_resets")
+    # Relationships
+    user = relationship("User", back_populates="password_resets")
