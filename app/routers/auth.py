@@ -40,7 +40,7 @@ load_dotenv()
 
 # Configure SendGrid API key
 SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
-SENDGRID_EMAIL_SENDER = "no-reply@delevia.com"  # Use your verified SendGrid sender email
+SENDGRID_EMAIL_SENDER = "Delevia@delevia.com"  # Use your verified SendGrid sender email
 
 # Configue Sendchamp
 SENDCHAMP_API_URL = os.getenv("SENDCHAMP_API_URL")
@@ -313,34 +313,29 @@ async def send_otp_sms(phone_number: str, otp_code: str):
 
 @router.post("/password-reset/verify-otp", status_code=status.HTTP_200_OK)
 async def verify_password_reset_otp(
-    email: str = Form(...),
-    otp_code: str = Form(...),
+    otp_code: str = Form(...),  # OTP input from the user
+    email: str = Form(...),  # User's email to identify the record
     db: AsyncSession = Depends(get_async_db)
 ):
     async with db as session:
-        # Check if the user exists
-        user_query = await session.execute(select(User).where(User.email == email))
-        user = user_query.scalar()
-
-        if not user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
-
-        # Verify OTP and expiration
-        reset_query = await session.execute(
-            select(PasswordReset).where(
-                PasswordReset.user_id == user.id,
-                PasswordReset.reset_token == otp_code,
-                PasswordReset.expires_at > datetime.utcnow(),
-                PasswordReset.used == False
+        # Query the password reset record for the given email and OTP
+        query = (
+            select(PasswordReset)
+            .join(User, User.id == PasswordReset.user_id)
+            .where(
+                User.email == email,
+                PasswordReset.otp_code == otp_code,
+                PasswordReset.expires_at > datetime.utcnow(),  # Check if OTP is not expired
+                PasswordReset.used == False  # Ensure OTP hasn't been used
             )
         )
-        reset_entry = reset_query.scalar()
+        result = await session.execute(query)
+        password_reset = result.scalar()
 
-        if not reset_entry:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OTP.")
+        if not password_reset:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired OTP."
+            )
 
-        # Mark the OTP as used
-        reset_entry.used = True
-        await session.commit()
-
-    return {"message": "OTP verified. You can now reset your password."}
+    return {"message": "OTP verified successfully. You may now reset your password."}
