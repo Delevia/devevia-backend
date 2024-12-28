@@ -40,7 +40,7 @@ load_dotenv()
 
 # Configure SendGrid API key
 SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
-SENDGRID_EMAIL_SENDER = "Delevia@delevia.com"  # Use your verified SendGrid sender email
+SENDGRID_EMAIL_SENDER = "Delevia<no-reply@delevia.com>"  # Use your verified SendGrid sender email
 
 # Configue Sendchamp
 SENDCHAMP_API_URL = os.getenv("SENDCHAMP_API_URL")
