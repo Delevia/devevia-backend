@@ -3,7 +3,7 @@ from sqlalchemy.orm import relationship
 from .database import Base
 from sqlalchemy.sql.expression import text
 from .enums import UserType, UserStatusEnum, PaymentMethodEnum, RideStatusEnum, RideTypeEnum, WalletTransactionEnum, OTPTypeEnum, GenderEnum
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func  # Import func to use for timestamp
 import uuid
@@ -41,6 +41,11 @@ class User(Base):
     sent_messages = relationship("ChatMessage", foreign_keys="[ChatMessage.sender_id]", back_populates="sender")
     received_messages = relationship("ChatMessage", foreign_keys="[ChatMessage.receiver_id]", back_populates="receiver")
     password_resets = relationship("PasswordReset", back_populates="user")
+    panic_button_entries = relationship("PanicButton", back_populates="user")
+    
+    # Relationships for calls
+    outgoing_calls = relationship("CallLog", foreign_keys="[CallLog.caller_id]", back_populates="caller")
+    incoming_calls = relationship("CallLog", foreign_keys="[CallLog.receiver_id]",  back_populates="receiver")
 
 
 
@@ -75,6 +80,8 @@ class Rider(Base):
     rides = relationship("Ride", back_populates="rider")
     ratings = relationship("Rating", back_populates="rider")
     payment_methods = relationship("PaymentMethod", back_populates="rider")
+    temporary_photos = relationship("TemporaryUserPhoto", back_populates="rider")
+
     
     # Referral relationships
     referrals_made_by_rider = relationship("Referral", foreign_keys=[Referral.referrer_rider_id], back_populates="referrer_rider")
@@ -102,14 +109,17 @@ class Driver(Base):
     ssn_number = Column(String, nullable=True, unique=True) 
     ssn_photo = Column(String, nullable=True) 
     vehicle_inspection_approval = Column(String, nullable=True)
-
-
+     # Coordinates for driver location
+    latitude = Column(Float, nullable=True)  
+    longitude = Column(Float, nullable=True)  
+    
     # Relationships
     vehicle = relationship("Vehicle", back_populates="driver", uselist=False)
     user = relationship("User", back_populates="driver")
     rides = relationship("Ride", back_populates="driver")
     ratings = relationship("Rating", back_populates="driver")
     referrals_made_by_driver = relationship("Referral", foreign_keys=[Referral.referrer_driver_id], back_populates="referrer_driver")
+    temporary_photos = relationship("TemporaryUserPhoto", back_populates="driver")
 
 
 # Vehicle Model
@@ -146,12 +156,21 @@ class Ride(Base):
     ride_type = Column(SQLAEnum(RideTypeEnum), default=RideTypeEnum.STANDARD, nullable=False)
     payment_status = Column(String, default="PENDING")
     recipient_phone_number = Column(String(15), nullable=True)
+    panic_activated = Column(Boolean, default=False)  # Field to track panic button activation
     booking_for = Column(String, nullable=False, default='self')
+
+     # Coordinates for driver location
+    pickup_latitude = Column(Float, nullable=True)  
+    pickup_longitude = Column(Float, nullable=True)  
+    dropoff_latitude = Column(Float, nullable=True)  
+    dropoff_longitude = Column(Float, nullable=True)  
 
     rider = relationship("Rider", back_populates="rides")
     driver = relationship("Driver", back_populates="rides")
     rating = relationship("Rating", uselist=False, back_populates="ride")
     messages = relationship("ChatMessage", back_populates="ride")
+    call_logs = relationship("CallLog", back_populates="ride")  
+
 
 
 # OTP Verification Model
@@ -291,7 +310,7 @@ class CompanyWallet(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     balance = Column(Float, default=0.0)
-    account_number = Column(String, unique=True, nullable=False)  # New column for account number
+    account_number = Column(String, unique=True, nullable=False)  # New column for account numberdriver
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, onupdate=datetime.utcnow)
 
@@ -312,3 +331,56 @@ class PasswordReset(Base):
 
     # Relationships
     user = relationship("User", back_populates="password_resets")
+
+
+
+class TemporaryUserPhoto(Base):
+    __tablename__ = "temporary_user_photos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    driver_id = Column(Integer, ForeignKey("drivers.id"), nullable=True)
+    rider_id = Column(Integer, ForeignKey("riders.id"), nullable=True)
+    photo_path = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, default=lambda: datetime.utcnow() + timedelta(weeks=1))
+
+    driver = relationship("Driver", back_populates="temporary_photos")
+    rider = relationship("Rider", back_populates="temporary_photos")
+
+
+
+class PanicButton(Base):
+    __tablename__ = "panic_buttons"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    latitude = Column(Float, nullable=True)  # Optional: For location tracking
+    longitude = Column(Float, nullable=True)  # Optional: For location tracking
+    activated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    resolved = Column(Boolean, default=False)  # Track if the distress call is resolved
+    message = Column(String, nullable=True)  # Optional: Additional message from the user
+
+    user = relationship("User", back_populates="panic_button_entries")
+
+
+
+class CallLog(Base):
+    __tablename__ = "call_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ride_id = Column(Integer, ForeignKey("rides.id"), nullable=False)
+    caller_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    receiver_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    status = Column(String, default="INITIATED", nullable=False)  # INITIATED, ACCEPTED, REJECTED, ENDED
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    ride = relationship("Ride", back_populates="call_logs")
+    caller = relationship("User", foreign_keys=[caller_id])
+    receiver = relationship("User", foreign_keys=[receiver_id])
+
+
+class DriverLocation(Base):
+    __tablename__ = "driver_locations"
+    driver_id = Column(Integer, primary_key=True, index=True)
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)

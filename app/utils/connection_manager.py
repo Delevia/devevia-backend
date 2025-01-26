@@ -69,3 +69,55 @@ class ConnectionManager:
 
 # Instantiate the manager
 manager = ConnectionManager()
+
+
+
+class CallConnectionManager:
+    def __init__(self):
+        # Maintain a mapping of user_id to active WebSocket connections
+        self.active_connections: Dict[int, WebSocket] = {}
+
+    async def connect(self, user_id: int, websocket: WebSocket):
+        """Connect a user to the WebSocket and accept the WebSocket connection."""
+        await websocket.accept()
+        if user_id in self.active_connections:
+            logger.warning(f"User {user_id} already connected. Replacing the existing connection.")
+        self.active_connections[user_id] = websocket
+        logger.info(f"User {user_id} connected.")
+
+    async def disconnect(self, user_id: int):
+        """Disconnect a user from the WebSocket and remove them from active connections."""
+        if user_id in self.active_connections:
+            del self.active_connections[user_id]
+            logger.info(f"User {user_id} disconnected.")
+
+    async def send_personal_message(self, message: dict, user_id: int):
+        """Send a message to a specific user by their `user_id`."""
+        websocket = self.active_connections.get(user_id)
+        if websocket:
+            try:
+                await websocket.send_json(message)
+                logger.info(f"Message sent to user {user_id}: {message}")
+            except Exception as e:
+                logger.error(f"Failed to send message to user {user_id}: {e}")
+                await self.disconnect(user_id)
+        else:
+            logger.warning(f"User {user_id} not connected. Message not sent: {message}")
+
+    async def broadcast(self, message: dict):
+        """Broadcast a message to all connected users."""
+        disconnected_users = []
+        for user_id, websocket in self.active_connections.items():
+            try:
+                await websocket.send_json(message)
+            except Exception as e:
+                logger.error(f"Failed to send message to user {user_id}: {e}")
+                disconnected_users.append(user_id)
+        
+        # Clean up disconnected users
+        for user_id in disconnected_users:
+            await self.disconnect(user_id)
+            logger.info(f"User {user_id} removed from active connections due to broadcast failure.")
+
+# Instantiate the CallConnectionManager
+manager = CallConnectionManager()

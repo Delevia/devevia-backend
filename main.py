@@ -6,10 +6,11 @@ from sqlalchemy.future import select
 from sqlalchemy import delete
 from datetime import datetime, timedelta
 import logging
-from app.routers import auth, users, rides, wallet, chatMessage
+from app.routers import auth, users, rides, wallet, chatMessage, pushNotifications,coordinates
+
 from app.database import Base, async_engine, get_async_db
-from app.models import Ride, OTPVerification, ChatMessage
-from app.utils.connection_manager import ConnectionManager
+from app.models import Ride, ChatMessage, CallLog
+from app.utils.connection_manager import ConnectionManager, CallConnectionManager
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from app.utils.otp_delete_test import delete_expired_otps
@@ -31,7 +32,7 @@ app.add_middleware(
 
 # WebSocket Connection Manager
 manager = ConnectionManager()
-
+call_manager = CallConnectionManager()
 # Set up the scheduler
 scheduler = AsyncIOScheduler()
 
@@ -74,6 +75,7 @@ async def shutdown_scheduler():
 @app.get("/")
 async def read_root():
     return {"message": "OTP Cleanup Service is running!"}
+
 
 # WebSocket endpoint for chat within rides
 @app.websocket("/ws/chat/{ride_id}/{user_id}")
@@ -137,9 +139,133 @@ async def websocket_endpoint(
         await websocket.close(code=1011)  # Close with a server error code
 
 
+
+@app.websocket("/ws/call/{ride_id}/{user_id}")
+async def websocket_call_endpoint(
+    websocket: WebSocket,
+    ride_id: int,
+    user_id: int,
+    db: AsyncSession = Depends(get_async_db)
+):
+    """
+    WebSocket endpoint for handling call functionality within a ride.
+    """
+    # Check if the ride exists
+    result = await db.execute(select(Ride).filter_by(id=ride_id))
+    ride = result.scalar()
+
+    if not ride:
+        await websocket.close(code=1008)
+        raise HTTPException(status_code=404, detail="Ride not found")
+
+    # Check if the user is authorized for the ride
+    if ride.rider_id != user_id and ride.driver_id != user_id:
+        await websocket.close(code=1008)
+        raise HTTPException(status_code=403, detail="User not authorized for this ride")
+
+    # Connect the user to the CallConnectionManager
+    await call_manager.connect(user_id, websocket)
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+
+            event_type = data.get("event_type")
+            recipient_id = data.get("recipient_id")
+            payload = data.get("payload")
+
+            if not recipient_id or recipient_id not in [ride.rider_id, ride.driver_id]:
+                await websocket.send_json({"error": "Recipient not part of this ride."})
+                continue
+
+            # Handle different call events
+            if event_type == "call_initiate":
+                # Log the call initiation
+                call_log = CallLog(
+                    ride_id=ride_id,
+                    caller_id=user_id,
+                    receiver_id=recipient_id,
+                    status="INITIATED"
+                )
+                db.add(call_log)
+                await db.commit()
+
+                # Notify the recipient
+                await call_manager.send_personal_message(
+                    {
+                        "event_type": "call_initiate",
+                        "from_user": user_id,
+                        "message": "Incoming call.",
+                        "payload": payload
+                    },
+                    recipient_id
+                )
+
+            elif event_type == "call_accept":
+                # Update call log status
+                call_log = await db.execute(
+                    select(CallLog)
+                    .filter_by(ride_id=ride_id, caller_id=recipient_id, receiver_id=user_id, status="INITIATED")
+                )
+                call_log = call_log.scalar()
+                if call_log:
+                    call_log.status = "ACCEPTED"
+                    await db.commit()
+
+                # Notify the caller
+                await call_manager.send_personal_message(
+                    {"event_type": "call_accept", "from_user": user_id, "message": "Call accepted."},
+                    recipient_id
+                )
+
+            elif event_type == "call_reject":
+                # Update call log status
+                call_log = await db.execute(
+                    select(CallLog)
+                    .filter_by(ride_id=ride_id, caller_id=recipient_id, receiver_id=user_id, status="INITIATED")
+                )
+                call_log = call_log.scalar()
+                if call_log:
+                    call_log.status = "REJECTED"
+                    await db.commit()
+
+                # Notify the caller
+                await call_manager.send_personal_message(
+                    {"event_type": "call_reject", "from_user": user_id, "message": "Call rejected."},
+                    recipient_id
+                )
+
+            elif event_type == "call_end":
+                # End an active call
+                await call_manager.send_personal_message(
+                    {"event_type": "call_end", "from_user": user_id, "message": "Call ended."},
+                    recipient_id
+                )
+
+            elif event_type == "signal":
+                # Exchange signaling data for WebRTC
+                await call_manager.send_personal_message(
+                    {"event_type": "signal", "from_user": user_id, "payload": payload},
+                    recipient_id
+                )
+
+            else:
+                await websocket.send_json({"error": "Invalid event type."})
+
+    except WebSocketDisconnect:
+        await call_manager.disconnect(user_id)
+        logger.info(f"User {user_id} disconnected from WebSocket.")
+    except Exception as e:
+        logger.error(f"Unexpected error in WebSocket: {e}")
+        await websocket.close(code=1011)  # Close with a server error code
+
 # Include routers
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(users.router, prefix="/users", tags=["Users"])
 app.include_router(rides.router, prefix="/rides", tags=["Rides"])
 app.include_router(wallet.router, prefix="/wallet", tags=["Wallet"])
 app.include_router(chatMessage.router, prefix="/chatMessage", tags=["ChatMessage"])
+app.include_router(pushNotifications.router, prefix="/pushNotifications", tags=["pushNotifications"])
+app.include_router(coordinates.router, prefix="/coordinates", tags=["coordinates"])
+
+

@@ -1,11 +1,12 @@
 from fastapi import APIRouter, HTTPException, status, Depends, Form, UploadFile, File
 from typing import Any, Optional, Union
+from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import or_
 from datetime import datetime, date, timezone  
 from ..database import get_async_db
-from ..models import User, Rider, Driver, KYC, Admin, Wallet, Referral, PasswordReset
+from ..models import User, Rider, Driver, KYC, Admin, Wallet, Referral, PasswordReset, TemporaryUserPhoto, PanicButton
 from ..schemas import KycCreate, AdminCreate, get_password_hash, pwd_context
 from ..utils.schemas_utils import RiderProfileUpdate, RiderProfile, PreRegisterRequest, DriverPreRegisterRequest
 from ..utils.utils_dependencies_files import get_current_user, generate_hashed_referral_code
@@ -30,7 +31,6 @@ router = APIRouter()
 
 # Define the path to the 'app/router' directory where the log file will be stored
 log_directory = 'app/router'
-
 # Check if the directory exists; if not, create it
 if not os.path.exists(log_directory):
     os.makedirs(log_directory)
@@ -44,115 +44,6 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-
-@router.post("/pre-register/rider/", status_code=status.HTTP_200_OK)
-async def pre_register_rider(
-    request: PreRegisterRequest,
-    db: AsyncSession = Depends(get_async_db)
-):
-    # Extract data from the request
-    full_name = request.full_name
-    user_name = request.user_name
-    phone_number = request.phone_number
-    email = request.email
-    password = request.password
-    referral_code = request.referral_code
-
-    async with db as session:
-        # Check if phone number, email, or username is already registered by any user (driver or rider)
-        user_query = await session.execute(
-            select(User)
-            .filter(
-                (User.phone_number == phone_number) |
-                (User.email == email) |
-                (User.user_name == user_name)
-            )
-        )
-        existing_user = user_query.scalars().first()
-
-        if existing_user:
-            if existing_user.phone_number == phone_number:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Phone number is already associated with another user."
-                )
-            elif existing_user.email == email:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Email address is already associated with another user."
-                )
-            elif existing_user.user_name == user_name:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Username is already taken by another user."
-                )
-
-        # Handle referral code validation
-        referrer_rider = None
-        referrer_driver = None
-        if referral_code:
-            referrer_rider_query = await session.execute(
-                select(Rider).filter(Rider.referral_code == referral_code)
-            )
-            referrer_rider = referrer_rider_query.scalars().first()
-
-            if not referrer_rider:
-                referrer_driver_query = await session.execute(
-                    select(Driver).filter(Driver.referral_code == referral_code)
-                )
-                referrer_driver = referrer_driver_query.scalars().first()
-
-            if not referrer_rider and not referrer_driver:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid referral code."
-                )
-
-        # Generate OTP and expiration time
-        otp_code = generate_otp()
-        expiration_time = generate_otp_expiration()
-
-        # Send OTP via email
-        async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
-            email_response = await client.post(
-                "/auth/send-otp-email",
-                params={"to_email": email, "otp_code": otp_code}
-            )
-            if email_response.status_code != 200:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Failed to send OTP email."
-                )
-
-        # Add OTP entry to database
-        otp_entry = OTPVerification(
-            full_name=full_name,
-            user_name=user_name,
-            phone_number=phone_number,
-            email=email,
-            otp_code=otp_code,
-            expires_at=expiration_time,
-            is_verified=False,
-            hashed_password=hash_password(password),  # Hash the password
-            referral_code=referral_code
-        )
-        session.add(otp_entry)
-        await session.commit()
-        await session.refresh(otp_entry)
-
-    return {
-        "message": "Pre-registration successful. OTP sent via email.",
-        "data": {
-            "full_name": otp_entry.full_name,
-            "user_name": otp_entry.user_name,
-            "phone_number": otp_entry.phone_number,
-            "email": otp_entry.email,
-            "otp_code": otp_entry.otp_code,
-            "expires_at": otp_entry.expires_at,
-            "is_verified": otp_entry.is_verified,
-            "referral_code": otp_entry.referral_code,
-        }
-    }
 
 
 @router.post("/pre-register/rider/new/", status_code=status.HTTP_200_OK)
@@ -177,7 +68,7 @@ async def pre_register_rider(
         )
 
     async with db as session:
-        # Check if phone number, email, or username is already registered
+        # Check if phone number, email, or username is already registered in the User table
         user_query = await session.execute(
             select(User).filter(
                 (User.phone_number == phone_number) |
@@ -188,6 +79,7 @@ async def pre_register_rider(
         existing_user = user_query.scalars().first()
 
         if existing_user:
+            # If any of the values exist, raise an exception with relevant message
             if existing_user.phone_number == phone_number:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -203,6 +95,23 @@ async def pre_register_rider(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Username is already taken by another user."
                 )
+
+        # Check if the credentials already exist in the OTPVerification table
+        otp_query = await session.execute(
+            select(OTPVerification).filter(
+                (OTPVerification.phone_number == phone_number) |
+                (OTPVerification.email == email) |
+                (OTPVerification.user_name == user_name)
+            )
+        )
+        existing_otp = otp_query.scalars().first()
+
+        if existing_otp:
+            # If OTP is already sent for the credentials, raise an exception
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="OTP has already been sent to your email. Please check your inbox."
+            )
 
         # Handle referral code validation
         referrer_rider = None
@@ -241,7 +150,7 @@ async def pre_register_rider(
                     detail="Failed to send OTP email."
                 )
 
-        # Handle country-specific fields
+        # Handle country-specific fields and save OTP data
         otp_entry = OTPVerification(
             full_name=full_name,
             user_name=user_name,
@@ -293,6 +202,7 @@ async def save_image(file: UploadFile, folder: str) -> str:
         raise e
 
     return file_path  # Return the file path for storage in the database
+
 
 # Complete Rider Registration
 @router.post("/rider-complete-registration/", status_code=status.HTTP_200_OK)
@@ -381,7 +291,8 @@ async def complete_registration(
 
         await session.commit()  # Commit the User, Rider, Wallet, and Referral entries
 
-        return {"message": "Registration completed successfully", "account_number": account_number}
+        return {"message": "Registration completed successfully", 
+                "account_number": account_number}
 
 
 @router.post("/pre-register/driver/", status_code=status.HTTP_200_OK)
@@ -425,11 +336,28 @@ async def pre_register_driver(
                     detail="Username is already taken by another user."
                 )
 
+        # Check if the credentials already exist in the OTPVerification table
+        otp_query = await session.execute(
+            select(OTPVerification).filter(
+                (OTPVerification.phone_number == phone_number) |
+                (OTPVerification.email == email) |
+                (OTPVerification.user_name == user_name)
+            )
+        )
+        existing_otp = otp_query.scalars().first()
+
+        if existing_otp:
+            # If OTP is already sent for the credentials, raise an exception
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="OTP has already been sent to your email. Please check your inbox."
+            )
+
         # Generate OTP and expiration time
         otp_code = generate_otp()
         expiration_time = generate_otp_expiration()
 
-        # Store the user data along with the OTP in the database
+        # Store the user data along with the OTP in the OTPVerification table
         otp_entry = OTPVerification(
             full_name=full_name,
             user_name=user_name,
@@ -456,7 +384,7 @@ async def pre_register_driver(
                 detail="Failed to send OTP email."
             )
     
-    # # Send OTP via SMS (optional, if you want to include this functionality)
+    # Optionally, send OTP via SMS (if you want to include this functionality)
     # async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
     #     sms_response = await client.post(
     #         "/auth/send-otp/v1/messaging/send_sms", params={"phone_number": phone_number, "otp_code": otp_code}
@@ -1420,3 +1348,72 @@ async def reset_password(
         await session.commit()
 
     return {"message": "Password reset successfully."}
+
+
+
+# Function to save image and return the file path
+async def save_image(file: UploadFile, folder_path: str) -> str:
+    # Convert folder_path to Path object
+    folder = Path(folder_path)
+    
+    # Create the folder if it doesn't exist
+    if not folder.exists():
+        folder.mkdir(parents=True, exist_ok=True)
+    
+    # Create a unique filename for the uploaded image
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    file_name = f"{timestamp}_{file.filename}"
+    
+    # Define the full path to save the image
+    file_path = folder / file_name
+    
+    # Save the file
+    with open(file_path, "wb") as buffer:
+        content = await file.read()  # Read the content of the file
+        buffer.write(content)  # Write the content to the file
+    
+    # Return the path where the file was saved
+    return str(file_path)
+
+
+@router.post("/users/temp-photo/")
+async def upload_temp_driver_photo(
+    driver_id: int = None,
+    rider_id: int = None,  # Optional for cases when it’s a driver photo
+    file: UploadFile = File(...), 
+    db: AsyncSession = Depends(get_async_db)
+):
+    # Validate that the file is an image
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Invalid file type. Please upload an image.")
+
+    try:
+        # Determine if the uploaded photo is for a driver or a rider
+        if driver_id:
+            folder_path = './assets/temporal_photos/driver_photos'
+        elif rider_id:
+            folder_path = './assets/temporal_photos/riders/rider_photos'
+        else:
+            raise HTTPException(status_code=400, detail="Either driver_id or rider_id must be provided.")
+        
+        # Save the image
+        photo_path = await save_image(file, folder_path)
+        
+        # Create a temporary record
+        temp_photo = TemporaryUserPhoto(
+            driver_id=driver_id,
+            rider_id=rider_id,
+            photo_path=photo_path
+        )
+        
+        db.add(temp_photo)
+        await db.flush()  # Ensure data is sent to the DB
+        await db.commit()  # Commit the transaction
+
+        return {"message": "Temporary photo uploaded successfully.", "photo_path": photo_path}
+    
+    except Exception as e:
+        await db.rollback()  # Rollback the transaction in case of error
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+    
+

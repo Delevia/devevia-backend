@@ -7,13 +7,14 @@ from ..enums import RideStatusEnum, PaymentMethodEnum
 from ..utils.rides_schemas import RatingRequest, PaymentMethodRequest, RideRequest, ModifyRidePriceRequest, ModifyRideResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..utils.rides_utility_functions import calculate_estimated_price
+from .. utils.panic_button import send_panic_notification_email
 from sqlalchemy.future import select
 import traceback
 from sqlalchemy import update
 import logging  # Added logging for debugging
 from datetime import datetime
 from ..enums import WalletTransactionEnum
-
+from ..models import User
 
 
 
@@ -194,13 +195,31 @@ async def accept_ride(
     
  
 
-# Confirm Ride Endpoint
 @router.post("/ride/confirm", status_code=status.HTTP_200_OK)
 async def confirm_ride(
     ride_id: int,
     rider_id: int,
+    pickup_latitude: float,
+    pickup_longitude: float,
+    dropoff_latitude: float,
+    dropoff_longitude: float,
     db: AsyncSession = Depends(get_async_db)
 ):
+    """
+    Confirm a ride for the given ride ID and rider ID, including coordinates.
+
+    Args:
+        ride_id (int): The ID of the ride to confirm.
+        rider_id (int): The ID of the rider confirming the ride.
+        pickup_latitude (float): Latitude for the pickup location.
+        pickup_longitude (float): Longitude for the pickup location.
+        dropoff_latitude (float): Latitude for the dropoff location.
+        dropoff_longitude (float): Longitude for the dropoff location.
+        db (AsyncSession): The database session.
+
+    Returns:
+        dict: Confirmation message with ride details, including coordinates.
+    """
     ride = await db.get(Ride, ride_id)
     if not ride:
         raise HTTPException(status_code=404, detail="Ride not found.")
@@ -231,18 +250,32 @@ async def confirm_ride(
             detail="No payment method selected. Please add a payment method before confirming the ride."
         )
 
+    # Update the ride details with the provided coordinates
     ride.status = RideStatusEnum.PENDING
+    ride.pickup_latitude = pickup_latitude
+    ride.pickup_longitude = pickup_longitude
+    ride.dropoff_latitude = dropoff_latitude
+    ride.dropoff_longitude = dropoff_longitude
     
     try:
         db.add(ride)
         await db.commit()
         await db.refresh(ride)
 
+        # Include pickup and dropoff coordinates in the response
         return {
             "message": "Ride confirmed, waiting to be matched with a driver.",
             "ride_id": ride.id,
             "status": ride.status,
-            "payment_method": payment_method.payment_type
+            "payment_method": payment_method.payment_type,
+            "pickup_location": {
+                "latitude": ride.pickup_latitude,
+                "longitude": ride.pickup_longitude,
+            },
+            "dropoff_location": {
+                "latitude": ride.dropoff_latitude,
+                "longitude": ride.dropoff_longitude,
+            },
         }
     
     except Exception as e:
@@ -250,7 +283,6 @@ async def confirm_ride(
         print(f"Error during ride confirmation: {error_details}")
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"An error occurred while confirming the ride: {e}")
-
 
 
 #Start Ride Endpoint
@@ -676,3 +708,36 @@ async def modify_ride_price(
         pickup_location=ride.pickup_location,
         dropoff_location=ride.dropoff_location
     )
+
+@router.post("/rides/{ride_id}/panic")
+async def activate_panic_button(
+    ride_id: int,
+    user_id: int,  # Pass user_id directly as a query or path parameter
+    db: AsyncSession = Depends(get_async_db),
+):
+    # Fetch the ride
+    result = await db.execute(select(Ride).filter(Ride.id == ride_id))
+    ride = result.scalars().first()
+    
+    if not ride:
+        raise HTTPException(status_code=404, detail="Ride not found")
+
+    # Update the panic button status
+    ride.panic_activated = True
+    ride.panic_activator = user_id  # Use the provided user_id directly
+
+    # Commit the changes
+    await db.commit()
+    await db.refresh(ride)
+
+    # Send notification email
+    emergency_contact_email = "odeywisdom@gmail.com"  # Replace with your desired email address
+    await send_panic_notification_email(
+        to_email=emergency_contact_email,
+        ride_id=ride.id,
+        activator_role="user",  # Generic role since we're not validating the user's association with the ride
+        pickup_location=ride.pickup_location,
+        dropoff_location=ride.dropoff_location,
+    )
+
+    return {"message": f"Panic button activated. Help is on the way!"}
