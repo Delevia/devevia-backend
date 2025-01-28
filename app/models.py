@@ -108,6 +108,7 @@ class Driver(Base):
     proof_of_ownership = Column(String, nullable=True)  
     ssn_number = Column(String, nullable=True, unique=True) 
     ssn_photo = Column(String, nullable=True) 
+    rating = Column(Float, default=100, nullable=True,)
     vehicle_inspection_approval = Column(String, nullable=True)
      # Coordinates for driver location
     latitude = Column(Float, nullable=True)  

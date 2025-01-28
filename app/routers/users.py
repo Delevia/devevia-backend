@@ -537,7 +537,8 @@ async def complete_driver_registration(
             vehicle_interior_color=vehicle_interior_color,
             nin_photo=nin_photo_path,
             nin_number=nin_number,
-            proof_of_ownership=proof_of_ownership_path
+            proof_of_ownership=proof_of_ownership_path,
+            rating=100  # Default rating for all new drivers
         )
         db.add(driver)
 
@@ -579,6 +580,7 @@ async def complete_driver_registration(
                 "nin_photo": driver.nin_photo,
                 "nin_number": driver.nin_number,
                 "proof_of_ownership": driver.proof_of_ownership,
+                "rating": driver.rating  # Include the rating in the response
             },
             "wallet": {
                 "balance": wallet.balance,
@@ -586,7 +588,6 @@ async def complete_driver_registration(
             }
         }
     }
-
 
 @router.post("/complete-registration/driver/usa", status_code=status.HTTP_201_CREATED)
 async def complete_driver_registration(
@@ -598,7 +599,8 @@ async def complete_driver_registration(
     vehicle_model: str = Form(...),
     vehicle_exterior_color: str = Form(...),
     vehicle_interior_color: str = Form(...),
-    ssn_number: str = Form(...),
+    nin_number: str = Form(...),
+    nin_photo: UploadFile = File(...),
     vehicle_inspection_approval: UploadFile = File(...),
     vehicle_insurance_policy: UploadFile = File(...),
     driver_photo: UploadFile = File(...),
@@ -628,10 +630,10 @@ async def complete_driver_registration(
                 detail="User already exists."
             )
 
-        if await db.scalar(select(Driver).where(Driver.ssn_number == ssn_number)):
+        if await db.scalar(select(Driver).where(Driver.nin_number == nin_number)):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Driver with this SSN already exists."
+                detail="Driver with this NIN already exists."
             )
         if await db.scalar(select(Driver).where(Driver.license_number == license_number)):
             raise HTTPException(
@@ -657,6 +659,8 @@ async def complete_driver_registration(
         vehicle_inspection_approval_path = await save_image(
             vehicle_inspection_approval, './assets/drivers/vehicle_inspection_approvals'
         )
+        nin_photo_path = await save_image(nin_photo, './assets/drivers/nin_photos')
+        vehicle_insurance_policy_path = await save_image(vehicle_insurance_policy, './assets/drivers/vehicle_insurance_policies')
 
         driver = Driver(
             user_id=user.id,
@@ -666,12 +670,14 @@ async def complete_driver_registration(
             years_of_experience=years_of_experience,
             vehicle_name=vehicle_name,
             vehicle_model=vehicle_model,
-            vehicle_insurance_policy=await save_image(vehicle_insurance_policy, './assets/drivers/vehicle_insurance_policies'),
+            vehicle_insurance_policy=vehicle_insurance_policy_path,
             vehicle_exterior_color=vehicle_exterior_color,
             vehicle_interior_color=vehicle_interior_color,
-            ssn_number=ssn_number,
+            nin_number=nin_number,
+            nin_photo=nin_photo_path,
+            proof_of_ownership=proof_of_ownership_path,
             vehicle_inspection_approval=vehicle_inspection_approval_path,
-            proof_of_ownership=proof_of_ownership_path
+            rating=100  # Set initial rating to 100
         )
         db.add(driver)
 
@@ -710,8 +716,10 @@ async def complete_driver_registration(
                 "vehicle_insurance_policy": driver.vehicle_insurance_policy,
                 "vehicle_exterior_color": driver.vehicle_exterior_color,
                 "vehicle_interior_color": driver.vehicle_interior_color,
-                "vehicle_inspection_approval": driver.vehicle_inspection_approval,
+                "nin_photo": driver.nin_photo,
+                "nin_number": driver.nin_number,
                 "proof_of_ownership": driver.proof_of_ownership,
+                "rating": driver.rating  # Include the rating in the response
             },
             "wallet": {
                 "balance": wallet.balance,
