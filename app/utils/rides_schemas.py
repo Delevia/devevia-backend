@@ -98,3 +98,10 @@ class ModifyRideResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+
+
+class Location(BaseModel):
+    latitude: float
+    longitude: float

@@ -4,7 +4,7 @@ from ..database import get_async_db
 from ..models import  Ride, Rating, Driver, Rider, PaymentMethod, Wallet, Referral, Transaction
 from ..utils.rides_utility_functions import find_drivers_nearby, categorize_drivers_by_rating, update_driver_rating, tokenize_card
 from ..enums import RideStatusEnum, PaymentMethodEnum
-from ..utils.rides_schemas import RatingRequest, PaymentMethodRequest, RideRequest, ModifyRidePriceRequest, ModifyRideResponse
+from ..utils.rides_schemas import RatingRequest, PaymentMethodRequest, RideRequest, ModifyRidePriceRequest, ModifyRideResponse, Location
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..utils.rides_utility_functions import calculate_estimated_price
 from .. utils.panic_button import send_panic_notification_email
@@ -15,6 +15,7 @@ import logging  # Added logging for debugging
 from datetime import datetime
 from ..enums import WalletTransactionEnum
 from ..models import User
+from geopy.distance import geodesic
 
 
 
@@ -741,3 +742,19 @@ async def activate_panic_button(
     )
 
     return {"message": f"Panic button activated. Help is on the way!"}
+
+
+
+@router.post("/calculate_distance/")
+async def calculate_distance(pickup: Location, dropoff: Location):
+    # Use geodesic from geopy to calculate the distance
+    pickup_coords = (pickup.latitude, pickup.longitude)
+    dropoff_coords = (dropoff.latitude, dropoff.longitude)
+    
+    # Calculate the distance in kilometers
+    distance = geodesic(pickup_coords, dropoff_coords).kilometers
+    
+    # Calculate the price: $2 per kilometer
+    price = distance * 2
+    
+    return {"distance_km": distance, "price_usd": price}
