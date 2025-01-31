@@ -12,7 +12,7 @@ from ..utils.coordinate_schema import CoordinatesUpdateRequest
 router = APIRouter()
 
 
-@router.post("/coordinates/")
+@router.put("/coordinates/")
 async def update_driver_coordinates(
     payload: CoordinatesUpdateRequest,
     db: AsyncSession = Depends(get_async_db)):

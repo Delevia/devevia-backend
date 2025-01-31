@@ -745,7 +745,7 @@ async def activate_panic_button(
 
 
 
-@router.post("/calculate_distance/")
+@router.post("/calculate_distance_standard/")
 async def calculate_distance(pickup: Location, dropoff: Location):
     # Use geodesic from geopy to calculate the distance
     pickup_coords = (pickup.latitude, pickup.longitude)
@@ -756,5 +756,20 @@ async def calculate_distance(pickup: Location, dropoff: Location):
     
     # Calculate the price: $2 per kilometer
     price = distance * 2
+    
+    return {"distance_km": distance, "price_usd": price}
+
+
+@router.post("/calculate_distance_vip/")
+async def calculate_distance(pickup: Location, dropoff: Location):
+    # Use geodesic from geopy to calculate the distance
+    pickup_coords = (pickup.latitude, pickup.longitude)
+    dropoff_coords = (dropoff.latitude, dropoff.longitude)
+    
+    # Calculate the distance in kilometers
+    distance = geodesic(pickup_coords, dropoff_coords).kilometers
+    
+    # Calculate the price: $2 per kilometer
+    price = distance * 5
     
     return {"distance_km": distance, "price_usd": price}

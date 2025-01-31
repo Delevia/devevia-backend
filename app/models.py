@@ -111,8 +111,8 @@ class Driver(Base):
     rating = Column(Float, default=100, nullable=True,)
     vehicle_inspection_approval = Column(String, nullable=True)
      # Coordinates for driver location
-    latitude = Column(Float, nullable=True)  
-    longitude = Column(Float, nullable=True)  
+    latitude = Column(Float, default=0.00, nullable=True)  
+    longitude = Column(Float, default=0.00, nullable=True)  
     
     # Relationships
     vehicle = relationship("Vehicle", back_populates="driver", uselist=False)
