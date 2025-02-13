@@ -5,6 +5,8 @@ from fastapi import APIRouter, HTTPException, Depends
 from ..database import get_async_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..utils.coordinate_schema import CoordinatesUpdateRequest
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.future import select
 
 
 
@@ -15,7 +17,8 @@ router = APIRouter()
 @router.put("/coordinates/")
 async def update_driver_coordinates(
     payload: CoordinatesUpdateRequest,
-    db: AsyncSession = Depends(get_async_db)):
+    db: AsyncSession = Depends(get_async_db),
+):
     """
     Update the coordinates of drivers.
 
@@ -26,28 +29,34 @@ async def update_driver_coordinates(
         dict: Success message.
     """
     try:
-        # Update driver coordinates if provided
-        if payload.driver_coordinates:
-            for driver_coord in payload.driver_coordinates:
-                # Fetch the driver by ID
-                driver = db.query(Driver).filter(Driver.id == driver_coord.driver_id).first()
-                if not driver:
-                    raise HTTPException(
-                        status_code=404, detail=f"Driver with ID {driver_coord.driver_id} not found"
-                    )
-                
-                # Update the driver's coordinates
-                driver.latitude = driver_coord.latitude
-                driver.longitude = driver_coord.longitude
-                db.add(driver)
-
-            # Commit changes to the database
-            db.commit()
-            return {"message": "Driver coordinates updated successfully"}
-        else:
+        if not payload.driver_coordinates:
             raise HTTPException(
                 status_code=400, detail="No driver coordinates provided in the request"
             )
+
+        for driver_coord in payload.driver_coordinates:
+            # Fetch the driver asynchronously
+            result = await db.execute(select(Driver).filter(Driver.id == driver_coord.driver_id))
+            driver = result.scalars().first()
+
+            if not driver:
+                raise HTTPException(
+                    status_code=404, detail=f"Driver with ID {driver_coord.driver_id} not found"
+                )
+
+            # Update the driver's coordinates
+            driver.latitude = driver_coord.latitude
+            driver.longitude = driver_coord.longitude
+            db.add(driver)  # Add changes to session
+
+        # Commit changes to the database
+        await db.commit()
+        return {"message": "Driver coordinates updated successfully"}
+
+    except SQLAlchemyError as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
