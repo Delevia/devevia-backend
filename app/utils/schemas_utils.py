@@ -46,8 +46,6 @@ class RiderProfileUpdate(BaseModel):
     gender: Optional[GenderEnum]
     address: Optional[str]
     nin: Optional[str]
-    email: Optional[str]
-    phone_number: Optional[str]
     profile_photo: Optional[str]  # file path
     nin_photo: Optional[str]  # file path
 
@@ -56,6 +54,17 @@ class RiderProfileUpdate(BaseModel):
         if v and len(v) != 11:
             raise ValueError('NIN must be exactly 11 characters')
         return v
+
+    class Config:
+        from_attributes = True
+
+
+class RiderProfileUpdateus(BaseModel):
+    rider_id: int
+    gender: Optional[GenderEnum]
+    address: Optional[str]
+    ssn: Optional[str]
+    profile_photo: Optional[str]  # file path
 
     class Config:
         from_attributes = True
@@ -74,6 +83,18 @@ class RiderProfile(BaseModel):
     class Config:
         from_attributes = True
 
+class RiderProfileus(BaseModel):
+    rider_id: int
+    gender: Optional[str] = None
+    address: Optional[str] = None
+    ssn: Optional[str] = None
+    profile_photo: Optional[str] = None
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
+    full_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
 
 
 # Define a Pydantic model for the request body
@@ -94,16 +115,3 @@ class DriverPreRegisterRequest(BaseModel):
     password: str
 
 
-
-class DriverCompleteRegistrationRequest(BaseModel):
-    phone_number: str = Form(...)
-    license_number: str = Form(...)
-    license_expiry: date = Form(...)
-    years_of_experience: int = Form(...)
-    referral_code: str = Form(...)
-    vehicle_name: str = Form(...)
-    vehicle_model: str = Form(...)
-    vehicle_insurance_policy: str = Form(...)
-    vehicle_exterior_color: str = Form(...)
-    vehicle_interior_color: str = Form(...)
-    nin_number: str = Form(...)

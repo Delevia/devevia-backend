@@ -10,7 +10,7 @@ from app.routers import auth, users, rides, wallet, chatMessage, pushNotificatio
 
 from app.database import Base, async_engine, get_async_db
 from app.models import Ride, ChatMessage, CallLog
-from app.utils.connection_manager import ConnectionManager, CallConnectionManager
+from app.utils.connection_manager import ConnectionManager, CallConnectionManager, DriverConnectionManager
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from app.utils.otp_delete_test import delete_expired_otps
@@ -33,6 +33,7 @@ app.add_middleware(
 # WebSocket Connection Manager
 manager = ConnectionManager()
 call_manager = CallConnectionManager()
+driver_manager = DriverConnectionManager()
 # Set up the scheduler
 scheduler = AsyncIOScheduler()
 
@@ -257,7 +258,40 @@ async def websocket_call_endpoint(
         logger.info(f"User {user_id} disconnected from WebSocket.")
     except Exception as e:
         logger.error(f"Unexpected error in WebSocket: {e}")
+
         await websocket.close(code=1011)  # Close with a server error code
+
+
+@app.websocket("/ws/driver/{driver_id}")
+async def websocket_driver_endpoint(websocket: WebSocket, driver_id: int):
+    """
+    WebSocket endpoint for drivers to receive ride requests and updates.
+    """
+    await driver_manager.connect(driver_id, websocket)
+    try:
+        while True:
+            data = await websocket.receive_json()
+            event_type = data.get("event_type")
+            payload = data.get("payload")
+
+            if event_type == "ride_request":
+                await driver_manager.send_personal_message(
+                    {"event_type": "ride_request", "payload": payload}, driver_id
+                )
+            elif event_type == "ride_update":
+                await driver_manager.send_personal_message(
+                    {"event_type": "ride_update", "payload": payload}, driver_id
+                )
+            else:
+                await websocket.send_json({"error": "Invalid event type."})
+    except WebSocketDisconnect:
+        await driver_manager.disconnect(driver_id)
+        logger.info(f"Driver {driver_id} disconnected from WebSocket.")
+    except Exception as e:
+        logger.error(f"Unexpected error in WebSocket: {e}")
+        await websocket.close(code=1011)
+
+
 
 # Include routers
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])

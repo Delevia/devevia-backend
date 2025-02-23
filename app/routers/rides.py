@@ -16,11 +16,25 @@ from datetime import datetime
 from ..enums import WalletTransactionEnum
 from ..models import User
 from geopy.distance import geodesic
+import math
+
 
 
 
 
 router = APIRouter()
+
+
+# Haversine formula to calculate distance
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371  # Earth radius in km
+    lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = math.sin(dlat / 2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2)**2
+    c = 2 * math.asin(math.sqrt(a))
+    return R * c  # Distance in km
+
 
 # Ride Request Endpoint using RideRequest Schema
 @router.post("/ride/request", status_code=status.HTTP_200_OK)

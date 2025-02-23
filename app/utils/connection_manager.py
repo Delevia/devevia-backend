@@ -121,3 +121,29 @@ class CallConnectionManager:
 
 # Instantiate the CallConnectionManager
 manager = CallConnectionManager()
+
+
+
+class DriverConnectionManager:
+    def __init__(self):
+        self.active_drivers: Dict[int, WebSocket] = {}
+
+    async def connect(self, driver_id: int, websocket: WebSocket):
+        """Add a new driver to the active connections."""
+        await websocket.accept()
+        self.active_drivers[driver_id] = websocket
+
+    async def disconnect(self, driver_id: int):
+        """Remove a driver from active connections."""
+        if driver_id in self.active_drivers:
+            del self.active_drivers[driver_id]
+
+    async def send_personal_message(self, message: str, driver_id: int):
+        """Send a message to a specific driver."""
+        if driver_id in self.active_drivers:
+            await self.active_drivers[driver_id].send_text(message)
+
+    async def broadcast(self, message: str):
+        """Send a message to all connected drivers."""
+        for websocket in self.active_drivers.values():
+            await websocket.send_text(message)

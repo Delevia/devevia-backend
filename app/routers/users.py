@@ -8,7 +8,7 @@ from datetime import datetime, date, timezone
 from ..database import get_async_db
 from ..models import User, Rider, Driver, KYC, Admin, Wallet, Referral, PasswordReset, TemporaryUserPhoto, PanicButton
 from ..schemas import KycCreate, AdminCreate, get_password_hash, pwd_context
-from ..utils.schemas_utils import RiderProfileUpdate, RiderProfile, PreRegisterRequest, DriverPreRegisterRequest
+from ..utils.schemas_utils import RiderProfileUpdate, RiderProfile, PreRegisterRequest, DriverPreRegisterRequest, RiderProfileUpdateus, RiderProfileus
 from ..utils.utils_dependencies_files import get_current_user, generate_hashed_referral_code
 from ..utils.wallet_utilitity_functions import generate_global_unique_account_number
 import logging
@@ -291,8 +291,21 @@ async def complete_registration(
 
         await session.commit()  # Commit the User, Rider, Wallet, and Referral entries
 
-        return {"message": "Registration completed successfully", 
-                "account_number": account_number}
+        # Construct the user data to return
+        user_data = {
+            "id": user.id,
+            "full_name": user.full_name,
+            "user_name": user.user_name,
+            "phone_number": user.phone_number,
+            "email": user.email,
+            "user_type": user.user_type,
+            "account_number": account_number
+        }
+
+        return {
+            "message": "Registration completed successfully", 
+            "user": user_data
+        }
 
 
 @router.post("/pre-register/driver/", status_code=status.HTTP_200_OK)
@@ -599,8 +612,7 @@ async def complete_driver_registration(
     vehicle_model: str = Form(...),
     vehicle_exterior_color: str = Form(...),
     vehicle_interior_color: str = Form(...),
-    nin_number: str = Form(...),
-    nin_photo: UploadFile = File(...),
+    ssn_number: str = Form(...),
     vehicle_inspection_approval: UploadFile = File(...),
     vehicle_insurance_policy: UploadFile = File(...),
     driver_photo: UploadFile = File(...),
@@ -630,7 +642,7 @@ async def complete_driver_registration(
                 detail="User already exists."
             )
 
-        if await db.scalar(select(Driver).where(Driver.nin_number == nin_number)):
+        if await db.scalar(select(Driver).where(Driver.nin_number == ssn_number)):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Driver with this NIN already exists."
@@ -659,7 +671,6 @@ async def complete_driver_registration(
         vehicle_inspection_approval_path = await save_image(
             vehicle_inspection_approval, './assets/drivers/vehicle_inspection_approvals'
         )
-        nin_photo_path = await save_image(nin_photo, './assets/drivers/nin_photos')
         vehicle_insurance_policy_path = await save_image(vehicle_insurance_policy, './assets/drivers/vehicle_insurance_policies')
 
         driver = Driver(
@@ -673,8 +684,7 @@ async def complete_driver_registration(
             vehicle_insurance_policy=vehicle_insurance_policy_path,
             vehicle_exterior_color=vehicle_exterior_color,
             vehicle_interior_color=vehicle_interior_color,
-            nin_number=nin_number,
-            nin_photo=nin_photo_path,
+            ssn_number=ssn_number,
             proof_of_ownership=proof_of_ownership_path,
             vehicle_inspection_approval=vehicle_inspection_approval_path,
             rating=100  # Set initial rating to 100
@@ -716,8 +726,7 @@ async def complete_driver_registration(
                 "vehicle_insurance_policy": driver.vehicle_insurance_policy,
                 "vehicle_exterior_color": driver.vehicle_exterior_color,
                 "vehicle_interior_color": driver.vehicle_interior_color,
-                "nin_photo": driver.nin_photo,
-                "nin_number": driver.nin_number,
+                "ssn_number": driver.ssn_number,
                 "proof_of_ownership": driver.proof_of_ownership,
                 "rating": driver.rating  # Include the rating in the response
             },
@@ -727,257 +736,6 @@ async def complete_driver_registration(
             }
         }
     }
-
-
-# Rider Signup Endpoint
-@router.post("/signup/rider/", status_code=status.HTTP_201_CREATED)
-async def signup_rider(
-    full_name: str = Form(...),
-    user_name: str = Form(...),
-    phone_number: str = Form(...),
-    email: str = Form(...),
-    password: str = Form(...),
-    address: Optional[str] = Form(None),
-    # rider_photo: UploadFile = File(...),
-    referral_code: Optional[str] = Form(None),  # Add referral code field
-    db: AsyncSession = Depends(get_async_db)
-):
-    async with db as session:
-        # Check if email already exists
-        existing_email = await session.execute(
-            select(User).filter(User.email == email)
-        )
-        existing_email = existing_email.scalars().first()
-
-        if existing_email:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="A user with this email is already registered."
-            )
-
-        # Check if phone number already exists
-        existing_phone = await session.execute(
-            select(User).filter(User.phone_number == phone_number)
-        )
-        existing_phone = existing_phone.scalars().first()
-
-        if existing_phone:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="A user with this phone number is already registered."
-            )
-
-        # Check if username already exists
-        existing_username = await session.execute(
-            select(User).filter(User.user_name == user_name)
-        )
-        existing_username = existing_username.scalars().first()
-
-        if existing_username:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="A user with this username is already registered."
-            )
-
-        # If no duplicates are found, proceed with creating the user
-        hashed_password = get_password_hash(password)
-        db_user = User(
-            full_name=full_name,
-            user_name=user_name,
-            phone_number=phone_number,
-            email=email,
-            hashed_password=hashed_password,
-            address=address,
-            user_type="RIDER"
-        )
-        session.add(db_user)
-        await session.commit()
-        await session.refresh(db_user)
-
-        # Create wallet for the user
-        account_number = generate_global_unique_account_number()
-        db_wallet = Wallet(user_id=db_user.id, balance=0.0, account_number=account_number)
-        session.add(db_wallet)
-        await session.commit()
-        await session.refresh(db_wallet)
-
-        # Save rider-specific data
-        # file_content = await rider_photo.read()
-        db_rider = Rider(
-            user_id=db_user.id,
-            # rider_photo=file_content,
-        )
-        session.add(db_rider)
-        await session.commit()
-        await session.refresh(db_rider)
-
-        # Handle referral code if provided
-        if referral_code:
-            referrer = await session.execute(select(Rider).filter(Rider.referral_code == referral_code))
-            referrer_rider = referrer.scalars().first()
-
-            if referrer_rider:
-                referral = Referral(
-                    referrer_id=referrer_rider.id,
-                    referred_rider_id=db_rider.id
-                )
-                session.add(referral)
-                await session.commit()
-
-    return {
-        "message": "Rider registration successful",
-        "account_number": account_number
-    }
-
-
-# Driver Signup Endpoint
-@router.post("/signup/driver/", status_code=status.HTTP_201_CREATED)
-async def signup_driver(
-    full_name: str = Form(...),
-    user_name: str = Form(...),
-    phone_number: str = Form(...),
-    email: str = Form(...),
-    password: str = Form(...),
-    address: Optional[str] = Form(None),
-    license_number: str = Form(...),
-    license_expiry: date = Form(...),
-    years_of_experience: int = Form(...),
-    # driver_photo: UploadFile = File(...),
-    db: AsyncSession = Depends(get_async_db)
-):
-    async with db as session:
-        # Check if license number already exists for another driver
-        existing_license = await session.execute(
-            select(Driver).filter(Driver.license_number == license_number)
-        )
-        existing_license = existing_license.scalars().first()
-        if existing_license:
-            raise HTTPException(status_code=400, detail="License number already exists.")
-
-        # Check if email already exists
-        existing_email = await session.execute(
-            select(User).filter(User.email == email)
-        )
-        existing_email = existing_email.scalars().first()
-        if existing_email:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="A user with this email is already registered."
-            )
-
-        # Check if phone number already exists
-        existing_phone = await session.execute(
-            select(User).filter(User.phone_number == phone_number)
-        )
-        existing_phone = existing_phone.scalars().first()
-        if existing_phone:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="A user with this phone number is already registered."
-            )
-
-        # Check if username already exists
-        existing_username = await session.execute(
-            select(User).filter(User.user_name == user_name)
-        )
-        existing_username = existing_username.scalars().first()
-        if existing_username:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="A user with this username is already registered."
-            )
-
-        # If no user exists with the provided phone number, email, or username, proceed
-        hashed_password = get_password_hash(password)
-        db_user = User(
-            full_name=full_name,
-            user_name=user_name,
-            phone_number=phone_number,
-            email=email,
-            hashed_password=hashed_password,
-            address=address,
-            user_type="DRIVER"
-        )
-        session.add(db_user)
-        await session.commit()
-        await session.refresh(db_user)
-
-        # Create wallet for the user
-        account_number = generate_global_unique_account_number()
-        db_wallet = Wallet(user_id=db_user.id, balance=0.0, account_number=account_number)
-        session.add(db_wallet)
-        await session.commit()
-        await session.refresh(db_wallet)
-
-    # Save driver-specific data
-    # file_content = await driver_photo.read()
-    db_driver = Driver(
-        user_id=db_user.id,
-        license_number=license_number,
-        license_expiry=license_expiry,
-        years_of_experience=years_of_experience,
-        # driver_photo=file_content
-    )
-    session.add(db_driver)
-    await session.commit()
-    await session.refresh(db_driver)
-
-    return {"message": "Driver registration successful", "account_number": account_number}
-
-
-# OTP Verification
-@router.post("/verify-otp/")
-async def verify_otp(
-    phone_number: str,
-    otp_code: str,
-    db: AsyncSession = Depends(get_async_db)
-):
-    async with db as session:
-        otp_entry = await session.execute(
-            select(OTPVerification).filter(
-                OTPVerification.phone_number == phone_number,
-                OTPVerification.otp_code == otp_code,
-                OTPVerification.expires_at > datetime.utcnow(),
-                OTPVerification.is_verified == False
-            )
-        )
-        otp_entry = otp_entry.scalars().first()
-
-        if not otp_entry:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OTP.")
-
-        # Mark OTP as verified
-        otp_entry.is_verified = True
-        await session.commit()
-
-        # Create a new User using the details in OTPVerification
-        db_user = User(
-            full_name=otp_entry.full_name,
-            user_name=otp_entry.user_name,
-            phone_number=otp_entry.phone_number,
-            email=otp_entry.email,
-            hashed_password=otp_entry.hashed_password,
-            user_type="RIDER"
-        )
-        session.add(db_user)
-        await session.commit()
-        await session.refresh(db_user)  # Refresh to get the new user ID
-
-        # Create a wallet for the new user
-        account_number = generate_global_unique_account_number()  # Function to generate a unique account number
-        db_wallet = Wallet(
-            user_id=db_user.id,
-            balance=0.0,  # Initial balance
-            account_number=account_number
-        )
-        session.add(db_wallet)
-        await session.commit()
-
-        return {
-            "message": "OTP verified, user registered successfully, and wallet created.",
-            "account_number": account_number
-        }
-
 
 
 # Create a KYC
@@ -1127,93 +885,107 @@ async def save_image(file: UploadFile, folder: str) -> str:
     return file_path  # Return the file path for storage in the database
 
 
-@router.put("/riders/{rider_id}/profile", response_model=RiderProfileUpdate)
-async def update_rider_profile(
+
+# Update Nigeria Profile
+@router.put("/riders/{rider_id}/profile/ng", response_model=RiderProfileUpdate)
+async def update_rider_profile_ng(
     rider_id: int,
-    country: str = Query(..., description="Country of the rider (e.g., 'US' or 'NG')"),
     gender: Optional[str] = Form(None),
-    email: Optional[str] = Form(None),
     address: Optional[str] = Form(None),
-    phone_number: Optional[str] = Form(None),
-    nin: Optional[str] = Form(None),
-    ssn: Optional[str] = Form(None),
+    nin: str = Form(..., description="National Identification Number (NIN) is required for Nigerian riders"),
     profile_photo: Union[UploadFile, None] = File(None),
-    nin_photo: Union[UploadFile, None] = File(None),
+    nin_photo: UploadFile = File(..., description="NIN photo is required"),
     db: AsyncSession = Depends(get_async_db)
 ):
-    # Retrieve the rider profile
+    # Retrieve the rider
     result = await db.execute(select(Rider).where(Rider.id == rider_id))
     rider = result.scalar_one_or_none()
-
     if not rider:
         raise HTTPException(status_code=404, detail="Rider not found")
 
-    # Validate country-specific fields
-    if country == "NG":
-        if not nin or not nin_photo:
-            raise HTTPException(
-                status_code=400,
-                detail="NIN and NIN image are required for Nigerian citizens"
-            )
-    elif country == "US":
-        if not ssn:
-            raise HTTPException(
-                status_code=400,
-                detail="SSN is required for US citizens"
-            )
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail="Unsupported country. Please specify 'US' or 'NG'."
-        )
-
-    # Update country-specific fields
-    if country == "NG":
-        rider.nin = nin
-        if nin_photo:
-            nin_photo_path = await save_image(nin_photo, "nin_photos")
-            rider.nin_photo = nin_photo_path  # Save the file path in the database
-    elif country == "US":
-        rider.ssn = ssn  # Assume `ssn` field exists in Rider model
+    # Update NIN and NIN Photo
+    rider.nin = nin
+    nin_photo_path = await save_image(nin_photo, "nin_photos")
+    rider.nin_photo = nin_photo_path  # Save path in the database
 
     # Handle profile photo upload
     if profile_photo:
         profile_photo_path = await save_image(profile_photo, "profile_photos")
-        rider.rider_photo = profile_photo_path  # Save the file path in the database
+        rider.rider_photo = profile_photo_path  # Save file path
 
-    # Retrieve associated user and update relevant fields
+    # Retrieve and update associated user
     user = await db.get(User, rider.user_id)
     if user:
         if gender:
             user.gender = gender
         if address:
             user.address = address
-        if email:
-            user.email = email
-        if phone_number:
-            user.phone_number = phone_number
     else:
         raise HTTPException(status_code=404, detail="Associated user not found")
 
-    # Commit changes to the database
+    # Commit changes
     await db.commit()
     await db.refresh(rider)
 
     return RiderProfileUpdate(
         rider_id=rider.id,
-        gender=user.gender if user else None,
-        address=user.address if user else None,
-        nin=rider.nin if country == "NG" else None,
-        ssn=rider.ssn if country == "US" else None,
-        email=user.email if user else None,
-        phone_number=user.phone_number if user else None,
-        profile_photo=rider.rider_photo,
-        nin_photo=rider.nin_photo if country == "NG" else None
+        gender=user.gender,
+        address=user.address,
+        nin=rider.nin,
+        nin_photo=rider.nin_photo,
+        profile_photo=rider.rider_photo
+    )
+
+# Us Profile update
+@router.put("/riders/{rider_id}/profile/us", response_model=RiderProfileUpdateus)
+async def update_rider_profile_us(
+    rider_id: int,
+    gender: Optional[str] = Form(None),
+    address: Optional[str] = Form(None),
+    ssn: str = Form(..., description="SSN is required for US riders"),
+    profile_photo: Union[UploadFile, None] = File(None),
+    db: AsyncSession = Depends(get_async_db)
+):
+    # Retrieve the rider
+    result = await db.execute(select(Rider).where(Rider.id == rider_id))
+    rider = result.scalar_one_or_none()
+    if not rider:
+        raise HTTPException(status_code=404, detail="Rider not found")
+
+    # Update SSN
+    rider.ssn_number = ssn  # Save SSN in database
+
+    # Handle profile photo upload
+    if profile_photo:
+        profile_photo_path = await save_image(profile_photo, "profile_photos")
+        rider.rider_photo = profile_photo_path  # Save file path
+
+    # Retrieve and update associated user
+    user = await db.get(User, rider.user_id)
+    if user:
+        if gender:
+            user.gender = gender
+        if address:
+            user.address = address
+    else:
+        raise HTTPException(status_code=404, detail="Associated user not found")
+
+    # Commit changes
+    await db.commit()
+    await db.refresh(rider)
+
+    return RiderProfileUpdateus(
+        rider_id=rider.id,
+        gender=user.gender,
+        address=user.address,
+        ssn=rider.ssn_number,
+        profile_photo=rider.rider_photo
     )
 
 
+
 # Get Rider Profile
-@router.get("/riders/{rider_id}/profile", response_model=RiderProfile)
+@router.get("/riders/{rider_id}/profile/ng", response_model=RiderProfile)
 async def get_rider_profile(
     rider_id: int,
     db: AsyncSession = Depends(get_async_db)
@@ -1238,6 +1010,41 @@ async def get_rider_profile(
         "gender": user.gender,
         "address": user.address,
         "nin": rider.nin,
+        "profile_photo": rider.rider_photo,  # Return the file path instead of Base64
+        "email": user.email,
+        "phone_number": user.phone_number,
+        "full_name": user.full_name,
+    }
+
+    return profile_data
+
+
+# Get Rider Profile Us
+@router.get("/riders/{rider_id}/profile/us", response_model=RiderProfileus)
+async def get_rider_profile(
+    rider_id: int,
+    db: AsyncSession = Depends(get_async_db)
+):
+    # Retrieve the rider profile
+    result = await db.execute(select(Rider).where(Rider.id == rider_id))
+    rider = result.scalar_one_or_none()
+
+    if not rider:
+        raise HTTPException(status_code=404, detail="Rider not found")
+
+    # Retrieve associated User information
+    user_result = await db.execute(select(User).where(User.id == rider.user_id))
+    user = user_result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="Associated user not found")
+
+    # Combine selected profile details from Rider and User, returning only the profile photo path
+    profile_data = {
+        "rider_id": rider.id,
+        "gender": user.gender,
+        "address": user.address,
+        "ssn": rider.ssn_number,
         "profile_photo": rider.rider_photo,  # Return the file path instead of Base64
         "email": user.email,
         "phone_number": user.phone_number,

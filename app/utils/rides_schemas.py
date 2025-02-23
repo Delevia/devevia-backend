@@ -5,25 +5,36 @@ from ..enums import RideStatusEnum, PaymentMethodEnum
 
 
 
-# Define the RideRequest schema
+class Location(BaseModel):
+    latitude: float
+    longitude: float
+    address: str
+
 class RideRequest(BaseModel):
-    pickup_location: str
-    dropoff_location: str
-    booking_for: str = Field(..., pattern="^(self|other)$")  # Use 'pattern' instead of 'regex'
+    pickup_location: Location
+    dropoff_location: Location
+    booking_for: str = Field(..., pattern="^(self|other)$")
     recipient_phone_number: Optional[str] = Field(
-        None, min_length=10, max_length=15, pattern=r"^\d{10,15}$"  # Use 'pattern' here as well
+        None, min_length=10, max_length=15, pattern=r"^\d{10,15}$"
     )
 
     class Config:
-        json_schema_extra  = {
+        json_schema_extra = {
             "example": {
-                "pickup_location": "123 Main St",
-                "dropoff_location": "456 Elm St",
+                "pickup_location": {
+                    "latitude": 40.7128,
+                    "longitude": -74.0060,
+                    "address": "123 Main St, New York, NY"
+                },
+                "dropoff_location": {
+                    "latitude": 40.7306,
+                    "longitude": -73.9352,
+                    "address": "456 Elm St, Brooklyn, NY"
+                },
                 "booking_for": "other",
                 "recipient_phone_number": "5555555555"
             }
         }
-
 
 # Model for the response after ride booking
 class RideResponse(BaseModel):
