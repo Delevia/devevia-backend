@@ -887,14 +887,14 @@ async def save_image(file: UploadFile, folder: str) -> str:
 
 
 # Update Nigeria Profile
-@router.put("/riders/{rider_id}/profile/ng", response_model=RiderProfileUpdate)
+@router.put("/riders/{rider_id}/profile/ng")
 async def update_rider_profile_ng(
     rider_id: int,
     gender: Optional[str] = Form(None),
     address: Optional[str] = Form(None),
-    nin: str = Form(..., description="National Identification Number (NIN) is required for Nigerian riders"),
-    profile_photo: Union[UploadFile, None] = File(None),
-    nin_photo: UploadFile = File(..., description="NIN photo is required"),
+    nin: Optional[str] = Form(None, description="National Identification Number (NIN) for Nigerian riders"),
+    profile_photo: Optional[UploadFile] = File(None),
+    nin_photo: Optional[UploadFile] = File(None, description="NIN photo for verification"),
     db: AsyncSession = Depends(get_async_db)
 ):
     # Retrieve the rider
@@ -903,47 +903,61 @@ async def update_rider_profile_ng(
     if not rider:
         raise HTTPException(status_code=404, detail="Rider not found")
 
-    # Update NIN and NIN Photo
-    rider.nin = nin
-    nin_photo_path = await save_image(nin_photo, "nin_photos")
-    rider.nin_photo = nin_photo_path  # Save path in the database
+    # Update NIN only if it's not empty
+    if nin and nin.strip():
+        rider.nin = nin
 
-    # Handle profile photo upload
-    if profile_photo:
+    # Handle file uploads only if a valid file is provided
+    if nin_photo and nin_photo.filename and nin_photo.filename.strip():
+        nin_photo_path = await save_image(nin_photo, "nin_photos")
+        rider.nin_photo = nin_photo_path  # Save path in the database
+
+    if profile_photo and profile_photo.filename and profile_photo.filename.strip():
         profile_photo_path = await save_image(profile_photo, "profile_photos")
         rider.rider_photo = profile_photo_path  # Save file path
 
     # Retrieve and update associated user
     user = await db.get(User, rider.user_id)
-    if user:
-        if gender:
-            user.gender = gender
-        if address:
-            user.address = address
-    else:
+    if not user:
         raise HTTPException(status_code=404, detail="Associated user not found")
+
+    if gender:
+        user.gender = gender
+    if address:
+        user.address = address
+
+    # Prepare user data
+    user_data = {
+        "id": user.id,
+        "full_name": user.full_name,
+        "user_name": user.user_name,
+        "phone_number": user.phone_number,
+        "email": user.email,
+        "address": user.address,
+        "gender": user.gender,
+        "user_type": user.user_type,
+        "created_at": user.created_at
+    }
 
     # Commit changes
     await db.commit()
     await db.refresh(rider)
 
-    return RiderProfileUpdate(
-        rider_id=rider.id,
-        gender=user.gender,
-        address=user.address,
-        nin=rider.nin,
-        nin_photo=rider.nin_photo,
-        profile_photo=rider.rider_photo
-    )
+    return {
+        "message": "Profile updated successfully",
+        "user_type": user.user_type,
+        "rider_id": rider.id,
+        "user_data": user_data
+    }
 
-# Us Profile update
-@router.put("/riders/{rider_id}/profile/us", response_model=RiderProfileUpdateus)
+# US Profile Update
+@router.put("/riders/{rider_id}/profile/us")
 async def update_rider_profile_us(
     rider_id: int,
     gender: Optional[str] = Form(None),
     address: Optional[str] = Form(None),
-    ssn: str = Form(..., description="SSN is required for US riders"),
-    profile_photo: Union[UploadFile, None] = File(None),
+    ssn: Optional[str] = Form(None, description="SSN for US riders"),
+    profile_photo: Optional[UploadFile] = File(None),
     db: AsyncSession = Depends(get_async_db)
 ):
     # Retrieve the rider
@@ -952,36 +966,48 @@ async def update_rider_profile_us(
     if not rider:
         raise HTTPException(status_code=404, detail="Rider not found")
 
-    # Update SSN
-    rider.ssn_number = ssn  # Save SSN in database
+    # Update SSN if provided
+    if ssn:
+        rider.ssn_number = ssn  # Save SSN in database
 
-    # Handle profile photo upload
-    if profile_photo:
+    # Handle profile photo upload if provided
+    if profile_photo and profile_photo.filename.strip():
         profile_photo_path = await save_image(profile_photo, "profile_photos")
         rider.rider_photo = profile_photo_path  # Save file path
 
     # Retrieve and update associated user
     user = await db.get(User, rider.user_id)
-    if user:
-        if gender:
-            user.gender = gender
-        if address:
-            user.address = address
-    else:
+    if not user:
         raise HTTPException(status_code=404, detail="Associated user not found")
+
+    if gender:
+        user.gender = gender
+    if address:
+        user.address = address
+
+    # Prepare user data
+    user_data = {
+        "id": user.id,
+        "full_name": user.full_name,
+        "user_name": user.user_name,
+        "phone_number": user.phone_number,
+        "email": user.email,
+        "address": user.address,
+        "gender": user.gender,
+        "user_type": user.user_type,
+        "created_at": user.created_at
+    }
 
     # Commit changes
     await db.commit()
     await db.refresh(rider)
 
-    return RiderProfileUpdateus(
-        rider_id=rider.id,
-        gender=user.gender,
-        address=user.address,
-        ssn=rider.ssn_number,
-        profile_photo=rider.rider_photo
-    )
-
+    return {
+        "message": "Profile updated successfully",
+        "user_type": user.user_type,
+        "rider_id": rider.id,
+        "user_data": user_data
+    }
 
 
 # Get Rider Profile
