@@ -303,10 +303,13 @@ async def complete_registration(
         }
 
         return {
-            "message": "Registration completed successfully", 
-            "user": user_data
-        }
+                "message": "Registration completed successfully",
+                "user_type": user.user_type,
+                "rider_id": rider.id,
+                "user_data": user_data
+            }
 
+       
 
 @router.post("/pre-register/driver/", status_code=status.HTTP_200_OK)
 async def pre_register_driver(
