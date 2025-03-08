@@ -109,9 +109,9 @@ async def login_rider(
         "message": "Login Successful",
         "user_type": user.user_type,
         "rider_id": rider.id,
-        # "access_token": access_token,
-        # "refresh_token": refresh_token,
-        # "token_type": "bearer",
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
         "user_data": user_data
     }
 
