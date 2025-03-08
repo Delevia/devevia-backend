@@ -291,7 +291,8 @@ async def complete_registration(
 
         await session.commit()  # Commit the User, Rider, Wallet, and Referral entries
 
-        # Construct the user data to return
+
+            # Construct the user data to return
         user_data = {
             "id": user.id,
             "full_name": user.full_name,
@@ -302,12 +303,24 @@ async def complete_registration(
             "account_number": account_number
         }
 
+        # Construct the rider data to return
+        rider_data = {
+            "rider_id": rider.id,
+            "user_id": rider.user_id,
+            "rider_photo": rider.rider_photo,
+            "referral_code": rider.referral_code,
+            "nin": rider.nin,
+            "nin_photo": rider.nin_photo,
+            "ssn_number": rider.ssn_number
+        }
+
         return {
-                "message": "Registration completed successfully",
-                "user_type": user.user_type,
-                "rider_id": rider.id,
-                "user_data": user_data
-            }
+            "message": "Registration completed successfully",
+            "user_type": user.user_type,
+            "user_data": user_data,
+            "rider_data": rider_data
+        }
+
 
        
 
