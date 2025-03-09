@@ -13,7 +13,7 @@ from ..utils.utils_dependencies_files import get_current_user, generate_hashed_r
 from ..utils.wallet_utilitity_functions import generate_global_unique_account_number
 import logging
 import os
-import uuid
+from fastapi.encoders import jsonable_encoder
 from ..utils.otp import generate_otp, OTPVerification, generate_otp_expiration
 from uuid import uuid4
 import random
@@ -241,7 +241,8 @@ async def complete_registration(
             phone_number=otp_entry.phone_number,
             email=otp_entry.email,
             hashed_password=otp_entry.hashed_password,
-            user_type=UserType.RIDER  # Assuming UserType Enum includes RIDER
+            user_type=UserType.RIDER,  # Assuming UserType Enum includes RIDER
+            created_at=datetime.utcnow()
         )
         session.add(user)
         await session.flush()  # Flush to get the user.id before creating the Rider
@@ -291,36 +292,36 @@ async def complete_registration(
 
         await session.commit()  # Commit the User, Rider, Wallet, and Referral entries
 
-
-            # Construct the user data to return
-        user_data = {
-            "id": user.id,
-            "full_name": user.full_name,
-            "user_name": user.user_name,
-            "phone_number": user.phone_number,
-            "email": user.email,
-            "user_type": user.user_type,
-            "account_number": account_number
-        }
-
-        # Construct the rider data to return
-        rider_data = {
-            "rider_id": rider.id,
-            "user_id": rider.user_id,
-            "rider_photo": rider.rider_photo,
-            "referral_code": rider.referral_code,
-            "nin": rider.nin,
-            "nin_photo": rider.nin_photo,
-            "ssn_number": rider.ssn_number
-        }
+        # Prepare user data
+        user_data = jsonable_encoder(user)
+        user_data.pop("hashed_password", None)
 
         return {
             "message": "Registration completed successfully",
             "user_type": user.user_type,
-            "user_data": user_data,
-            "rider_data": rider_data
+            "rider_id": rider.id,
+            "user_data": {
+                "id": user.id,
+                "full_name": user.full_name,
+                "user_name": user.user_name,
+                "phone_number": user.phone_number,
+                "email": user.email,
+                "user_type": user.user_type,
+                "user_status": user.user_status,
+                "address": user.address,
+                "created_at": user.created_at,
+                "gender": user.gender,
+                "rider": {
+                    "id": rider.id,
+                    "user_id": rider.user_id,
+                    "nin": rider.nin,
+                    "ssn_number": rider.ssn_number,
+                    "rider_photo": rider.rider_photo,
+                    "referral_code": rider.referral_code,
+                    "nin_photo": rider.nin_photo
+                }
+            }
         }
-
 
        
 
