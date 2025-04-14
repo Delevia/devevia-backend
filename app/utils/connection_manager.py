@@ -1,7 +1,13 @@
-from fastapi import WebSocket
+from fastapi import WebSocket, HTTPException, WebSocketDisconnect
 from typing import List
 from typing import Dict  # Import Dict from typing
 import logging
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.expression import update
+from app.models import Driver
+from sqlalchemy.future import select
+from sqlalchemy.orm import Session
+
 
 
 logging.basicConfig(level=logging.INFO)
@@ -123,27 +129,61 @@ class CallConnectionManager:
 manager = CallConnectionManager()
 
 
-
 class DriverConnectionManager:
     def __init__(self):
-        self.active_drivers: Dict[int, WebSocket] = {}
+        self.active_connections: Dict[int, WebSocket] = {}
 
-    async def connect(self, driver_id: int, websocket: WebSocket):
-        """Add a new driver to the active connections."""
+    async def connect(self, driver_id: int, websocket: WebSocket, db: AsyncSession):
         await websocket.accept()
-        self.active_drivers[driver_id] = websocket
+        self.active_connections[driver_id] = websocket
+        print(f"🔌 Driver {driver_id} connected via WebSocket.")
 
-    async def disconnect(self, driver_id: int):
-        """Remove a driver from active connections."""
-        if driver_id in self.active_drivers:
-            del self.active_drivers[driver_id]
+        await self.mark_online(driver_id, db)
 
-    async def send_personal_message(self, message: str, driver_id: int):
-        """Send a message to a specific driver."""
-        if driver_id in self.active_drivers:
-            await self.active_drivers[driver_id].send_text(message)
+        try:
+            while True:
+                data = await websocket.receive_json()
 
-    async def broadcast(self, message: str):
-        """Send a message to all connected drivers."""
-        for websocket in self.active_drivers.values():
-            await websocket.send_text(message)
+                if data.get("type") == "location_update":
+                    await db.execute(
+                        update(Driver)
+                        .where(Driver.id == driver_id)
+                        .values(latitude=data["latitude"], longitude=data["longitude"])
+                    )
+                    await db.commit()
+                    print(f"📍 Updated location for Driver {driver_id}")
+
+                elif data.get("type") == "heartbeat":
+                    await self.mark_online(driver_id, db)
+                    print(f"💓 Heartbeat received from Driver {driver_id}")
+
+        except WebSocketDisconnect:
+            print(f"❌ Driver {driver_id} disconnected.")
+            await self.disconnect(driver_id, db)
+
+    async def disconnect(self, driver_id: int, db: AsyncSession):
+        if driver_id in self.active_connections:
+            del self.active_connections[driver_id]
+        await self.mark_offline(driver_id, db)
+
+    async def mark_online(self, driver_id: int, db: AsyncSession):
+        result = await db.execute(select(Driver).where(Driver.id == driver_id))
+        driver = result.scalars().first()
+        if driver:
+            driver.is_online = True
+            await db.commit()
+
+    async def mark_offline(self, driver_id: int, db: AsyncSession):
+        result = await db.execute(select(Driver).where(Driver.id == driver_id))
+        driver = result.scalars().first()
+        if driver:
+            driver.is_online = False
+            await db.commit()
+
+    async def send_message(self, driver_id: int, message: dict):
+        websocket = self.active_connections.get(driver_id)
+        if websocket:
+            await websocket.send_json(message)
+
+
+driver_connection_manager = DriverConnectionManager()

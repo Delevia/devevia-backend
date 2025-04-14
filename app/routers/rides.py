@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from sqlalchemy.orm import Session
 from ..database import get_async_db
 from ..models import  Ride, Rating, Driver, Rider, PaymentMethod, Wallet, Referral, Transaction
-from ..utils.rides_utility_functions import find_drivers_nearby, categorize_drivers_by_rating, update_driver_rating, tokenize_card
+from ..utils.rides_utility_functions import notify_new_ride, update_driver_rating, tokenize_card, find_nearby_drivers
 from ..enums import RideStatusEnum, PaymentMethodEnum
 from ..utils.rides_schemas import RatingRequest, PaymentMethodRequest, RideRequest, ModifyRidePriceRequest, ModifyRideResponse, Location
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +17,8 @@ from ..enums import WalletTransactionEnum
 from ..models import User
 from geopy.distance import geodesic
 import math
-
+from fastapi import BackgroundTasks
+from datetime import datetime
 
 
 
@@ -25,22 +26,11 @@ import math
 router = APIRouter()
 
 
-# Haversine formula to calculate distance
-def haversine(lat1, lon1, lat2, lon2):
-    R = 6371  # Earth radius in km
-    lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
-    a = math.sin(dlat / 2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2)**2
-    c = 2 * math.asin(math.sqrt(a))
-    return R * c  # Distance in km
-
-
 # Ride Request Endpoint using RideRequest Schema
 @router.post("/ride/request", status_code=status.HTTP_200_OK)
 async def request_ride(
-    request: RideRequest,  # Use the RideRequest schema as the request body
-    rider_id: int,  # You can pass rider_id as part of the request or extract it from authentication token
+    request: RideRequest,
+    rider_id: int,
     db: AsyncSession = Depends(get_async_db)
 ):
     # Validate the booking type and recipient phone number
@@ -56,12 +46,12 @@ async def request_ride(
     if not rider:
         raise HTTPException(status_code=404, detail="Rider not found")
 
-    # Calculate the estimated prices for both STANDARD and VIP rides
+    # Calculate estimated prices for both STANDARD and VIP rides
     try:
         standard_price = calculate_estimated_price(
             request.pickup_location, request.dropoff_location, ride_type="STANDARD"
         )
-        logging.info(f"Calculated STANDARD price: {standard_price}")  # Logging for debug
+        logging.info(f"Calculated STANDARD price: {standard_price}")  # Debug logging
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error calculating STANDARD price: {e}")
 
@@ -69,19 +59,23 @@ async def request_ride(
         vip_price = calculate_estimated_price(
             request.pickup_location, request.dropoff_location, ride_type="VIP"
         )
-        logging.info(f"Calculated VIP price: {vip_price}")  # Logging for debug
+        logging.info(f"Calculated VIP price: {vip_price}")  # Debug logging
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error calculating VIP price: {e}")
 
     # Store the ride as 'INITIATED' in the database
     new_ride = Ride(
         rider_id=rider_id,
-        pickup_location=request.pickup_location,
-        dropoff_location=request.dropoff_location,
-        status=RideStatusEnum.INITIATED,  # Set status to INITIATED
+        pickup_location=request.pickup_location.address,
+        dropoff_location=request.dropoff_location.address,
+        status=RideStatusEnum.INITIATED,
         estimated_price=None,  # No price yet because the rider has not selected the ride type
         booking_for=request.booking_for,
-        recipient_phone_number=request.recipient_phone_number if request.booking_for == "other" else None
+        recipient_phone_number=request.recipient_phone_number if request.booking_for == "other" else None,
+
+        # ✅ Store the calculated prices in the database
+        standard_price=standard_price,
+        vip_price=vip_price
     )
 
     try:
@@ -101,14 +95,15 @@ async def request_ride(
             "message": "Ride options",
             "ride_id": new_ride.id,  # Return the ride ID for future references
             "estimated_prices": {
-                "STANDARD": standard_price,  # Corrected typo
-                "VIP": vip_price  # Corrected key name to uppercase
+                "STANDARD": standard_price,
+                "VIP": vip_price
             }
         }
     except Exception as e:
-        await db.rollback()  # Ensure the transaction is rolled back on error
+        await db.rollback()  # Ensure rollback on error
         logging.error(f"An error occurred during ride request: {e}")  # Log error details
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+
     
 
 # Select Ride Type
@@ -116,15 +111,11 @@ async def request_ride(
 async def select_ride_type(
     rider_id: int,
     ride_type: str,  # Should be either 'VIP' or 'STANDARD'
-    ride_id: int,     # Ride ID should be included in the request body
+    ride_id: int,
     db: AsyncSession = Depends(get_async_db)
 ):
-    # Check if the ride type is valid
     if ride_type not in ["VIP", "STANDARD"]:
         raise HTTPException(status_code=400, detail="Invalid ride type. Must be 'VIP' or 'STANDARD'.")
-
-    # Calculate estimated price based on the selected ride type
-    estimated_price = 300 if ride_type == "VIP" else 200  # Static prices
 
     # Fetch the rider to ensure it exists
     result = await db.execute(select(Rider).filter(Rider.id == rider_id))
@@ -136,19 +127,19 @@ async def select_ride_type(
     result = await db.execute(select(Ride).filter(Ride.id == ride_id))
     ride = result.scalars().first()
 
-    # Check if the ride exists
     if not ride:
         raise HTTPException(status_code=404, detail="Ride not found")
+
+    # Retrieve the pre-calculated price from the database
+    estimated_price = ride.vip_price if ride_type == "VIP" else ride.standard_price
 
     # Update the ride with the selected ride type and estimated price
     ride.ride_type = ride_type
     ride.estimated_price = estimated_price
 
-    # Commit the changes to the database
+    # Commit the changes
     await db.commit()
     await db.refresh(ride)
-
-    # Assign a default driver (driver_id = 1) if needed
 
     return {
         "message": f"{ride_type} ride selected. Please confirm the ride.",
@@ -158,7 +149,6 @@ async def select_ride_type(
         "estimated_price": estimated_price,
         "confirmation_required": True
     }
-
 
 # Driver Accept Ride Endpoint
 @router.post("/ride/accept/{ride_id}", status_code=status.HTTP_200_OK)
@@ -210,7 +200,7 @@ async def accept_ride(
     
  
 
-@router.post("/ride/confirm", status_code=status.HTTP_200_OK)
+@router.post("/ride/confirm", status_code=200)
 async def confirm_ride(
     ride_id: int,
     rider_id: int,
@@ -218,86 +208,80 @@ async def confirm_ride(
     pickup_longitude: float,
     dropoff_latitude: float,
     dropoff_longitude: float,
-    db: AsyncSession = Depends(get_async_db)
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
-    Confirm a ride for the given ride ID and rider ID, including coordinates.
-
-    Args:
-        ride_id (int): The ID of the ride to confirm.
-        rider_id (int): The ID of the rider confirming the ride.
-        pickup_latitude (float): Latitude for the pickup location.
-        pickup_longitude (float): Longitude for the pickup location.
-        dropoff_latitude (float): Latitude for the dropoff location.
-        dropoff_longitude (float): Longitude for the dropoff location.
-        db (AsyncSession): The database session.
-
-    Returns:
-        dict: Confirmation message with ride details, including coordinates.
+    Confirm a ride and notify nearby drivers via WebSocket.
     """
-    ride = await db.get(Ride, ride_id)
-    if not ride:
-        raise HTTPException(status_code=404, detail="Ride not found.")
-    
-    if ride.rider_id != rider_id:
-        raise HTTPException(status_code=403, detail="Unauthorized: You cannot confirm this ride.")
-    
     try:
-        payment_method_query = await db.execute(
+        # 🚖 Fetch the ride details
+        ride = await db.get(Ride, ride_id)
+        if not ride:
+            raise HTTPException(status_code=404, detail="Ride not found.")
+
+        if ride.rider_id != rider_id:
+            raise HTTPException(status_code=403, detail="Unauthorized: You cannot confirm this ride.")
+
+        # 🔍 Check for a default payment method
+        result = await db.execute(
             select(PaymentMethod).where(
                 PaymentMethod.rider_id == rider_id,
                 PaymentMethod.is_default == True
             )
         )
-        payment_method = payment_method_query.scalar()
-        
-        if not payment_method:
-            print(f"No default payment method found for rider ID: {rider_id}")
-    
-    except Exception as e:
-        error_details = traceback.format_exc()
-        print(f"Error while fetching payment method: {error_details}")
-        raise HTTPException(status_code=500, detail="An error occurred while fetching the payment method.")
-    
-    if not payment_method:
-        raise HTTPException(
-            status_code=400,
-            detail="No payment method selected. Please add a payment method before confirming the ride."
-        )
+        payment_method = result.scalar()
 
-    # Update the ride details with the provided coordinates
-    ride.status = RideStatusEnum.PENDING
-    ride.pickup_latitude = pickup_latitude
-    ride.pickup_longitude = pickup_longitude
-    ride.dropoff_latitude = dropoff_latitude
-    ride.dropoff_longitude = dropoff_longitude
-    
-    try:
+        if not payment_method:
+            raise HTTPException(
+                status_code=400,
+                detail="No payment method selected. Please add a payment method before confirming the ride."
+            )
+
+        # 📝 Update ride details
+        if ride.status != RideStatusEnum.PENDING:
+            raise HTTPException(status_code=400, detail="Ride already confirmed or processed.")
+
+        ride.status = RideStatusEnum.PENDING
+        ride.pickup_latitude = pickup_latitude
+        ride.pickup_longitude = pickup_longitude
+        ride.dropoff_latitude = dropoff_latitude
+        ride.dropoff_longitude = dropoff_longitude
+
         db.add(ride)
         await db.commit()
         await db.refresh(ride)
 
-        # Include pickup and dropoff coordinates in the response
+        # 🚗 Find available drivers nearby
+        nearby_drivers = await find_nearby_drivers(pickup_latitude, pickup_longitude, db)
+
+        if not nearby_drivers:
+            return {
+                "message": "Ride confirmed, but no available drivers nearby.",
+                "ride_id": ride.id,
+                "status": ride.status,
+                "payment_method": payment_method.payment_type,
+            }
+
+        # 📢 Notify drivers asynchronously
+        background_tasks.add_task(notify_new_ride, ride, db)
+
         return {
             "message": "Ride confirmed, waiting to be matched with a driver.",
             "ride_id": ride.id,
             "status": ride.status,
             "payment_method": payment_method.payment_type,
-            "pickup_location": {
-                "latitude": ride.pickup_latitude,
-                "longitude": ride.pickup_longitude,
-            },
-            "dropoff_location": {
-                "latitude": ride.dropoff_latitude,
-                "longitude": ride.dropoff_longitude,
-            },
+            "pickup_location": {"latitude": ride.pickup_latitude, "longitude": ride.pickup_longitude},
+            "dropoff_location": {"latitude": ride.dropoff_latitude, "longitude": ride.dropoff_longitude},
+            "available_drivers": [{"id": driver_id} for driver_id in nearby_drivers],  # Return driver IDs only
         }
-    
+
+    except HTTPException as http_error:
+        raise http_error  # Rethrow known errors
+
     except Exception as e:
-        error_details = traceback.format_exc()
-        print(f"Error during ride confirmation: {error_details}")
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f"An error occurred while confirming the ride: {e}")
+        raise HTTPException(status_code=500, detail=f"An error occurred while confirming the ride: {str(e)}")
 
 
 #Start Ride Endpoint
@@ -347,7 +331,6 @@ async def start_ride(
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
 
-from datetime import datetime
 
 # Complete Ride Endpoint
 @router.post("/ride/complete/{ride_id}", status_code=status.HTTP_200_OK)

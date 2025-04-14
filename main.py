@@ -4,22 +4,35 @@ from fastapi_utils.tasks import repeat_every
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import delete
-from datetime import datetime, timedelta
+import json
+from contextlib import asynccontextmanager
+from sqlalchemy.orm import sessionmaker
+from datetime import datetime
+from app.utils.rides_schemas import RideResponse
+from app.enums import RideStatusEnum
 import logging
 from app.routers import auth, users, rides, wallet, chatMessage, pushNotifications,coordinates
-
 from app.database import Base, async_engine, get_async_db
-from app.models import Ride, ChatMessage, CallLog
-from app.utils.connection_manager import ConnectionManager, CallConnectionManager, DriverConnectionManager
+from app.models import Ride, ChatMessage, CallLog, OTPVerification
+from app.utils.connection_manager import ConnectionManager, CallConnectionManager, driver_connection_manager
+from app.routers.coordinates import update_driver_coordinates
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from app.utils.otp_delete_test import delete_expired_otps
+from app.routers.coordinates import update_driver_coordinates
+from app.models import Driver
+from app.utils.rides_utility_functions import get_rides_within_radius
+from sqlalchemy.sql.expression import update
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
 app = FastAPI()
+
+
+# router = APIRouter()
 
 # Add CORS Middleware
 app.add_middleware(
@@ -33,45 +46,96 @@ app.add_middleware(
 # WebSocket Connection Manager
 manager = ConnectionManager()
 call_manager = CallConnectionManager()
-driver_manager = DriverConnectionManager()
+
+# Dictionary to track active driver connections
+active_drivers = {}
+
 # Set up the scheduler
 scheduler = AsyncIOScheduler()
 
-@app.on_event("startup")
-async def start_scheduler():
+
+# Create session factory
+AsyncSessionLocal = sessionmaker(
+    bind=async_engine,
+    class_=AsyncSession,
+    expire_on_commit=False
+)
+
+async def delete_expired_otps():
     """
-    Start the scheduler to periodically delete expired OTPs.
+    Deletes all expired OTPs from the database.
     """
-    logger.info("Starting scheduler for OTP cleanup...")
+    async with AsyncSessionLocal() as session:
+        try:
+            logger.info("🔍 Checking for expired OTPs...")
 
-    # Schedule the OTP cleanup task to run every 2 minutes
-    scheduler.add_job(
-        delete_expired_otps,  # Function to run
-        trigger=IntervalTrigger(minutes=2),  # Every 2 minutes
-        id="otp_cleanup",  # Job id
-        name="Delete expired OTPs",  # Job name
-        replace_existing=True  # Replace the job if it already exists
-    )
+            # Get current timestamp
+            now = datetime.utcnow()
 
-    # Start the scheduler
-    scheduler.start()
-    logger.info("OTP cleanup task scheduled.")
+            # Select all expired OTPs
+            stmt = select(OTPVerification).where(OTPVerification.expires_at < now)
+            result = await session.execute(stmt)
+            expired_otps = result.scalars().all()
 
-@app.on_event("shutdown")
-async def shutdown_scheduler():
+            if expired_otps:
+                # Delete expired OTPs
+                for otp in expired_otps:
+                    await session.delete(otp)
+
+                await session.commit()
+                logger.info(f"✅ Deleted {len(expired_otps)} expired OTP(s).")
+            else:
+                logger.info("✅ No expired OTPs found.")
+
+        except Exception as e:
+            logger.error(f"❌ Error deleting expired OTPs: {e}")
+            await session.rollback()  # Rollback in case of error
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """
-    Shutdown the scheduler gracefully when the app shuts down.
+    Startup and shutdown event handler for FastAPI.
     """
-    logger.info("Shutting down scheduler...")
+    logger.info("🚀 Starting FastAPI application...")
 
-    # Ensure the event loop is still running
-    if scheduler._eventloop and scheduler._eventloop.is_running():
-        scheduler.shutdown()
-    else:
-        logger.warning("Scheduler event loop is not running!")
+    try:
+        logger.info("🔄 Starting scheduler for OTP cleanup...")
 
-    logger.info("Scheduler stopped.")
+        # Schedule the OTP cleanup task to run every 2 minutes
+        scheduler.add_job(
+            delete_expired_otps,  # Function to run
+            trigger=IntervalTrigger(minutes=2),  # Every 2 minutes
+            id="otp_cleanup",  # Job id
+            name="Delete expired OTPs",  # Job name
+            replace_existing=True  # Replace the job if it already exists
+        )
 
+        # Start the scheduler
+        scheduler.start()
+        logger.info("✅ OTP cleanup task scheduled and scheduler started.")
+    
+    except Exception as e:
+        logger.error(f"❌ Error starting scheduler: {e}")
+
+    yield  # App runs while this is active
+
+    # Shutdown logic
+    try:
+        logger.info("🛑 Shutting down scheduler...")
+
+        if scheduler.running:
+            scheduler.shutdown()
+            logger.info("✅ Scheduler stopped successfully.")
+        else:
+            logger.warning("⚠️ Scheduler was not running.")
+
+    except Exception as e:
+        logger.error(f"❌ Error stopping scheduler: {e}")
+
+    logger.info("🚀 FastAPI application shutdown complete.")
+
+# Create FastAPI app with lifespan context
+app = FastAPI(lifespan=lifespan)
 # Optional root endpoint to test the app
 @app.get("/")
 async def read_root():
@@ -262,36 +326,11 @@ async def websocket_call_endpoint(
         await websocket.close(code=1011)  # Close with a server error code
 
 
-@app.websocket("/ws/driver/{driver_id}")
-async def websocket_driver_endpoint(websocket: WebSocket, driver_id: int):
-    """
-    WebSocket endpoint for drivers to receive ride requests and updates.
-    """
-    await driver_manager.connect(driver_id, websocket)
-    try:
-        while True:
-            data = await websocket.receive_json()
-            event_type = data.get("event_type")
-            payload = data.get("payload")
 
-            if event_type == "ride_request":
-                await driver_manager.send_personal_message(
-                    {"event_type": "ride_request", "payload": payload}, driver_id
-                )
-            elif event_type == "ride_update":
-                await driver_manager.send_personal_message(
-                    {"event_type": "ride_update", "payload": payload}, driver_id
-                )
-            else:
-                await websocket.send_json({"error": "Invalid event type."})
-    except WebSocketDisconnect:
-        await driver_manager.disconnect(driver_id)
-        logger.info(f"Driver {driver_id} disconnected from WebSocket.")
-    except Exception as e:
-        logger.error(f"Unexpected error in WebSocket: {e}")
-        await websocket.close(code=1011)
-
-
+@app.websocket("/ws/drivers/{driver_id}")
+async def driver_ws(websocket: WebSocket, driver_id: int, db: AsyncSession = Depends(get_async_db)):
+    # 👇 Delegate all logic to the manager
+    await driver_connection_manager.connect(driver_id, websocket, db)
 
 # Include routers
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
