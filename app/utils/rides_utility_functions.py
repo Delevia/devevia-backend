@@ -193,6 +193,9 @@ def haversine(lat1, lon1, lat2, lon2):
     return c * r
 
 
+
+
+
 # async def notify_ride_taken(ride_id: int):
 #     await driver_connection_manager.broadcast({
 #         "event": "RIDE_TAKEN",
@@ -251,35 +254,37 @@ async def find_nearby_drivers(pickup_lat: float, pickup_lon: float, db: AsyncSes
     logging.info(f"✅ {len(nearby_drivers)} drivers are nearby and connected.")
     return nearby_drivers
 
+
 async def notify_new_ride(ride: Ride, db: AsyncSession):
     """Notify nearby drivers of a new ride request."""
     nearby_drivers = await find_nearby_drivers(ride.pickup_latitude, ride.pickup_longitude, db)
     logging.info(f"📡 Nearby Drivers to notify: {nearby_drivers}")
     logging.info(f"🔌 Active WebSocket connections: {list(driver_connection_manager.active_connections.keys())}")
 
-    for driver_id in nearby_drivers:
-        # Fetch driver from DB
-        result = await db.execute(select(Driver).where(Driver.id == driver_id))
-        driver = result.scalar()
+    # Prepare the ride request message
+    ride_message = {
+        "event": "new_ride_request",
+        "ride_id": ride.id,
+        "pickup": {"lat": ride.pickup_latitude, "lng": ride.pickup_longitude},
+        "dropoff": {"lat": ride.dropoff_latitude, "lng": ride.dropoff_longitude}
+    }
 
-        if driver:
-            if driver.is_online:
-                websocket = driver_connection_manager.active_connections.get(driver_id)
+    # Iterate over all active WebSocket connections
+    for driver_id, websocket in driver_connection_manager.active_connections.items():
+        # Check if the driver is online and nearby
+        if driver_id in nearby_drivers:
+            result = await db.execute(select(Driver).where(Driver.id == driver_id))
+            driver = result.scalar()
 
-                if websocket:
-                    try:
-                        await websocket.send_json({
-                            "event": "new_ride_request",
-                            "ride_id": ride.id,
-                            "pickup": {"lat": ride.pickup_latitude, "lng": ride.pickup_longitude},
-                            "dropoff": {"lat": ride.dropoff_latitude, "lng": ride.dropoff_longitude}
-                        })
-                        logging.info(f"📣 Sent ride request to Driver {driver_id}")
-                    except Exception as e:
-                        logging.warning(f"⚠️ Failed to notify Driver {driver_id}: {e}")
-                else:
-                    logging.warning(f"❌ No active WebSocket for Driver {driver_id} even though marked online.")
+            if driver and driver.is_online:
+                try:
+                    # Send the ride request notification to the connected driver
+                    await websocket.send_json(ride_message)
+                    logging.info(f"📣 Sent ride request to Driver {driver_id}")
+                except Exception as e:
+                    logging.warning(f"⚠️ Failed to notify Driver {driver_id}: {e}")
             else:
-                logging.warning(f"🚫 Driver {driver_id} is offline in DB.")
+                logging.warning(f"🚫 Driver {driver_id} is either offline or not eligible.")
         else:
-            logging.warning(f"⚠️ Driver {driver_id} not found in DB.")
+            logging.warning(f"❌ Driver {driver_id} is not in the nearby drivers list.")
+
